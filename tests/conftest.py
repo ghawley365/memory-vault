@@ -24,6 +24,11 @@ os.environ.setdefault("DB_PORT", "5432")
 os.environ["DB_NAME"] = "memory_vault_test"
 os.environ.setdefault("DB_USER", "memory_vault")
 os.environ.setdefault("DB_PASSWORD", "memory_vault")
+# Asymmetric-embedding machinery under test (model-agnostic): task
+# prefixes + a distinctive seq cap, exercised against the default model.
+os.environ["EMBEDDING_QUERY_PREFIX"] = "search_query: "
+os.environ["EMBEDDING_DOCUMENT_PREFIX"] = "search_document: "
+os.environ["EMBEDDING_MAX_SEQ_LENGTH"] = "128"
 os.environ["API_AUTH_ENABLED"] = "true"
 os.environ["API_RATE_LIMIT_PER_MIN"] = "100000"  # effectively unlimited for tests
 

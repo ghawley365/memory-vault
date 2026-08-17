@@ -30,6 +30,20 @@ class Settings:
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     embedding_dimensions: int = int(os.getenv("EMBEDDING_DIMENSIONS", "384"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+    # Task prefixes for asymmetric retrieval models (e.g. nomic-embed-text
+    # wants "search_query: " / "search_document: "). Both default to "" so
+    # the stock symmetric model is unchanged. Applied at encode time only.
+    embedding_query_prefix: str = os.getenv("EMBEDDING_QUERY_PREFIX", "")
+    embedding_document_prefix: str = os.getenv("EMBEDDING_DOCUMENT_PREFIX", "")
+    # Some models (e.g. nomic-embed-text) ship custom architecture code on
+    # the HF hub; loading them requires opting in. Off by default.
+    embedding_trust_remote_code: bool = (
+        os.getenv("EMBEDDING_TRUST_REMOTE_CODE", "false").lower() == "true"
+    )
+    # Cap the model's token context (0 = keep the model default). Long-context
+    # models can request enormous attention buffers on big batches; a cap
+    # keeps embedding memory bounded.
+    embedding_max_seq_length: int = int(os.getenv("EMBEDDING_MAX_SEQ_LENGTH", "0"))
 
     # Search
     rrf_k: int = int(os.getenv("RRF_K", "60"))

@@ -51,6 +51,7 @@ from memory_vault.services.embedding import MODEL_NAME, embed  # noqa: E402
 from memory_vault.services.ingestion import _run_extraction  # noqa: E402
 from memory_vault.services.search import (  # noqa: E402
     hybrid_search,
+    log_query,
     parse_since,
     resolve_space_names,
 )
@@ -59,6 +60,7 @@ from memory_vault.services.spaces import (  # noqa: E402
     SpaceNotFound,
     move_chunk,
 )
+from memory_vault.services.supersession import supersede  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -208,6 +210,10 @@ async def recall(
             limit=limit,
         )
 
+        # Observability: memory_status reads queries_24h from query_log,
+        # which nothing on the MCP path fed until now.
+        await log_query(query, space_ids or None, results, elapsed_ms)
+
         formatted = []
         for r in results:
             entry = {
@@ -257,6 +263,7 @@ async def remember(
     space: str = "default",
     source: str = "mcp",
     speaker: str = "human",
+    supersedes: str | None = None,
 ) -> str:
     """
     Store a new memory in the system.
@@ -264,11 +271,17 @@ async def remember(
     The text is embedded and stored as a searchable chunk.
     Use this to save important information, decisions, or knowledge.
 
+    When this memory REPLACES an earlier one (a decision changed, a fact
+    became stale, a plan was revised), pass the old chunk_id as `supersedes`:
+    the old chunk is kept as history but leaves search results, so recall
+    returns only the current truth.
+
     Args:
         text: The text content to remember.
         space: Which memory space to store it in (default "default").
         source: Where this memory comes from (default "mcp").
         speaker: Who said/wrote this — "human" or "assistant" (default "human").
+        supersedes: chunk_id of an earlier memory this one replaces (optional).
     """
     if not await _ensure_db():
         return _dumps({"stored": False, "error": "Database offline"})
@@ -344,16 +357,24 @@ async def remember(
         # knowledge graph, which is what #100 reported.
         await _run_extraction(chunk_id, text, space_id)
 
-        return _dumps(
-            {
-                "stored": True,
-                "chunk_id": chunk_id,
-                "space": space,
-                "category": category,
-                "importance": importance,
-                "message": "Memory stored successfully.",
-            }
-        )
+        response = {
+            "stored": True,
+            "chunk_id": chunk_id,
+            "space": space,
+            "category": category,
+            "importance": importance,
+            "message": "Memory stored successfully.",
+        }
+
+        if supersedes:
+            try:
+                await supersede(supersedes, chunk_id)
+                response["superseded_chunk_id"] = supersedes
+            except ValueError as se:
+                # The new memory is stored either way — report the failure.
+                response["supersede_error"] = str(se)
+
+        return _dumps(response)
 
     except Exception as e:
         logger.exception("remember failed")
@@ -567,6 +588,8 @@ async def memory_status() -> str:
                    COUNT(c.id) FILTER (
                        WHERE c.importance > 0
                          AND (c.metadata->>'forgotten')::boolean IS NOT TRUE
+                     AND c.superseded_by IS NULL
+                         AND c.superseded_by IS NULL
                    ) AS active
             FROM memory_spaces ms
             LEFT JOIN chunks c ON c.space_id = ms.id
@@ -624,6 +647,7 @@ async def list_spaces() -> str:
                COUNT(c.id) FILTER (
                    WHERE c.importance > 0
                      AND (c.metadata->>'forgotten')::boolean IS NOT TRUE
+                     AND c.superseded_by IS NULL
                ) AS chunk_count
         FROM memory_spaces ms
         LEFT JOIN chunks c ON c.space_id = ms.id
@@ -660,6 +684,7 @@ async def memory_stats() -> str:
                COUNT(c.id) FILTER (
                    WHERE c.importance > 0
                      AND (c.metadata->>'forgotten')::boolean IS NOT TRUE
+                     AND c.superseded_by IS NULL
                ) AS active
         FROM memory_spaces ms
         LEFT JOIN chunks c ON c.space_id = ms.id

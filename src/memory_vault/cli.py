@@ -47,6 +47,29 @@ def main() -> None:
     # migrate
     sub.add_parser("migrate", help="Run database migrations")
 
+    # consolidate
+    p_cons = sub.add_parser(
+        "consolidate",
+        help="Find near-duplicate memories; --apply supersedes the older of each pair",
+    )
+    p_cons.add_argument("--space", default=None, help="Limit to one space")
+    p_cons.add_argument("--threshold", type=float, default=0.95, help="Cosine similarity threshold")
+    p_cons.add_argument("--limit", type=int, default=500, help="Max pairs per run")
+    p_cons.add_argument(
+        "--apply", action="store_true", help="Apply supersessions (default: dry run)"
+    )
+
+    # reembed
+    p_reembed = sub.add_parser(
+        "reembed",
+        help="Backfill embeddings with the current model (chunks with NULL embedding)",
+    )
+    p_reembed.add_argument("--space", default=None, help="Limit to one space")
+    p_reembed.add_argument("--batch", type=int, default=64, help="Batch size")
+    p_reembed.add_argument(
+        "--all", action="store_true", help="Re-embed every chunk, not just NULLs"
+    )
+
     # mcp
     sub.add_parser("mcp", help="Start the MCP server (stdio transport)")
 
@@ -94,6 +117,10 @@ def main() -> None:
 
     if args.command == "migrate":
         asyncio.run(_cmd_migrate())
+    elif args.command == "consolidate":
+        asyncio.run(_cmd_consolidate(args.space, args.threshold, args.limit, args.apply))
+    elif args.command == "reembed":
+        asyncio.run(_cmd_reembed(args.space, args.batch, args.all))
     elif args.command == "ingest":
         asyncio.run(_cmd_ingest(args.file, args.space))
     elif args.command == "search":
@@ -133,6 +160,64 @@ async def _cmd_migrate() -> None:
     await run_migrations()
     await close_pool()
     print("Migrations complete.")
+
+
+async def _cmd_consolidate(space: str | None, threshold: float, limit: int, apply: bool) -> None:
+    from memory_vault.models.db import close_pool, fetch_one, init_pool
+    from memory_vault.services.consolidation import consolidate
+
+    await init_pool()
+    try:
+        space_id = None
+        if space:
+            row = await fetch_one("SELECT id FROM memory_spaces WHERE name = %s", (space,))
+            if not row:
+                print(f"Unknown space: {space}")
+                sys.exit(1)
+            space_id = row["id"]
+
+        report = await consolidate(space_id=space_id, threshold=threshold, apply=apply, limit=limit)
+
+        mode = "APPLIED" if apply else "DRY RUN"
+        print(f"\nConsolidation ({mode}) — threshold {threshold}")
+        print(f"Near-duplicate pairs found: {report['pairs_found']}")
+        if apply:
+            print(f"Supersessions applied: {report['applied']}")
+        for err in report["errors"]:
+            print(f"  ! {err}")
+
+        for p in report["pairs"][:20]:
+            older = p["older_content"][:90].replace("\n", " ")
+            newer = p["newer_content"][:90].replace("\n", " ")
+            print(f"\n  sim={p['similarity']:.4f}")
+            print(f"    older ({p['older_id'][:8]}): {older}")
+            print(f"    newer ({p['newer_id'][:8]}): {newer}")
+        if report["pairs_found"] > 20:
+            print(f"\n  ... and {report['pairs_found'] - 20} more pairs")
+        if not apply and report["pairs_found"]:
+            print("\nRe-run with --apply to supersede the older of each pair.")
+    finally:
+        await close_pool()
+
+
+async def _cmd_reembed(space: str | None, batch: int, all_chunks: bool) -> None:
+    from memory_vault.models.db import close_pool, fetch_one, init_pool
+    from memory_vault.services.reembed import reembed_missing
+
+    await init_pool()
+    try:
+        space_id = None
+        if space:
+            row = await fetch_one("SELECT id FROM memory_spaces WHERE name = %s", (space,))
+            if not row:
+                print(f"Unknown space: {space}")
+                sys.exit(1)
+            space_id = row["id"]
+
+        updated = await reembed_missing(space_id=space_id, batch_size=batch, all_chunks=all_chunks)
+        print(f"Re-embedded {updated} chunks.")
+    finally:
+        await close_pool()
 
 
 async def _cmd_ingest(file_path: str, space: str) -> None:
