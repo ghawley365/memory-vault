@@ -47,6 +47,17 @@ def main() -> None:
     # migrate
     sub.add_parser("migrate", help="Run database migrations")
 
+    # reembed
+    p_reembed = sub.add_parser(
+        "reembed",
+        help="Backfill embeddings with the current model (chunks with NULL embedding)",
+    )
+    p_reembed.add_argument("--space", default=None, help="Limit to one space")
+    p_reembed.add_argument("--batch", type=int, default=64, help="Batch size")
+    p_reembed.add_argument(
+        "--all", action="store_true", help="Re-embed every chunk, not just NULLs"
+    )
+
     # mcp
     sub.add_parser("mcp", help="Start the MCP server (stdio transport)")
 
@@ -94,6 +105,8 @@ def main() -> None:
 
     if args.command == "migrate":
         asyncio.run(_cmd_migrate())
+    elif args.command == "reembed":
+        asyncio.run(_cmd_reembed(args.space, args.batch, args.all))
     elif args.command == "ingest":
         asyncio.run(_cmd_ingest(args.file, args.space))
     elif args.command == "search":
@@ -133,6 +146,28 @@ async def _cmd_migrate() -> None:
     await run_migrations()
     await close_pool()
     print("Migrations complete.")
+
+
+async def _cmd_reembed(space: str | None, batch: int, all_chunks: bool) -> None:
+    from src.models.db import close_pool, fetch_one, init_pool
+    from src.services.reembed import reembed_missing
+
+    await init_pool()
+    try:
+        space_id = None
+        if space:
+            row = await fetch_one("SELECT id FROM memory_spaces WHERE name = %s", (space,))
+            if not row:
+                print(f"Unknown space: {space}")
+                sys.exit(1)
+            space_id = row["id"]
+
+        updated = await reembed_missing(
+            space_id=space_id, batch_size=batch, all_chunks=all_chunks
+        )
+        print(f"Re-embedded {updated} chunks.")
+    finally:
+        await close_pool()
 
 
 async def _cmd_ingest(file_path: str, space: str) -> None:

@@ -26,9 +26,21 @@ class Settings:
     api_port: int = int(os.getenv("API_PORT", "8000"))
 
     # Embedding
-    embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    embedding_dimensions: int = int(os.getenv("EMBEDDING_DIMENSIONS", "384"))
+    # nomic-embed-text-v1.5: 768-d, 8192-token context (vs 256 for MiniLM),
+    # asymmetric retrieval via task prefixes. Prefixes are applied at encode
+    # time only — stored content never includes them. Set both prefixes to ""
+    # for symmetric models (e.g. all-MiniLM-L6-v2, BAAI/bge-m3).
+    embedding_model: str = os.getenv("EMBEDDING_MODEL", "nomic-ai/nomic-embed-text-v1.5")
+    embedding_dimensions: int = int(os.getenv("EMBEDDING_DIMENSIONS", "768"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+    embedding_query_prefix: str = os.getenv("EMBEDDING_QUERY_PREFIX", "search_query: ")
+    embedding_document_prefix: str = os.getenv(
+        "EMBEDDING_DOCUMENT_PREFIX", "search_document: "
+    )
+    # nomic's custom architecture ships model code on the HF hub.
+    embedding_trust_remote_code: bool = (
+        os.getenv("EMBEDDING_TRUST_REMOTE_CODE", "true").lower() == "true"
+    )
 
     # Search
     rrf_k: int = int(os.getenv("RRF_K", "60"))

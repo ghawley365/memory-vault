@@ -14,6 +14,7 @@ dependencies = [
     "psycopg[binary]>=3.3.4,<4",
     "psycopg-pool>=3.1,<4",
     "sentence-transformers>=2.2,<4",
+    "einops>=0.7",  # required by nomic-embed-text remote code
     "numpy>=2.4.5",
     "python-dotenv>=1.2.2",
     "mcp>=1.27.1",
