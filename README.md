@@ -98,6 +98,13 @@ memory-vault ingest notes.md --space default
 # Search memories
 memory-vault search "hybrid search architecture" --limit 5
 
+# Find near-duplicate memories (dry run), then dedup via supersession
+memory-vault consolidate --space default
+memory-vault consolidate --space default --apply
+
+# Backfill embeddings after changing EMBEDDING_MODEL
+memory-vault reembed --all
+
 # Check status
 memory-vault status
 ```
@@ -135,7 +142,7 @@ Three things are deliberate about this stack:
 
 - **PostgreSQL 16 + pgvector** — vector storage and hybrid search in one database
 - **Python 3.11+** — async backend with psycopg 3
-- **sentence-transformers** — `all-MiniLM-L6-v2` embeddings (384-d, runs on CPU)
+- **sentence-transformers** — `nomic-embed-text-v1.5` embeddings (768-d, 2048-token context, runs locally)
 - **spaCy** — `en_core_web_sm` for entity extraction (CPU-only, no LLM calls)
 - **FastAPI** — REST API with bearer auth, rate limiting, and OpenAPI docs
 - **React 19 + Vite + TanStack Query** — web dashboard, baked into the main Docker image
@@ -154,7 +161,7 @@ Memory Vault exposes four tools via the [Model Context Protocol](https://modelco
 | Tool | Description |
 |------|-------------|
 | `recall` | Search memories with hybrid search (vector + full-text + RRF) |
-| `remember` | Store a new memory — auto-classified and embedded |
+| `remember` | Store a new memory — auto-classified and embedded. Pass `supersedes=<chunk_id>` when it replaces an earlier memory: the old chunk leaves recall but stays as history |
 | `forget` | Soft-delete a memory by chunk ID |
 | `memory_status` | Database health, chunk counts, embedding model info |
 
@@ -490,7 +497,7 @@ cognee and Mem0 are closer in stack but cloud-first or SDK-first. Memory Vault i
 
 ### Do I need a GPU?
 
-No. Default embeddings (`all-MiniLM-L6-v2`, 384-d) and entity extraction (`en_core_web_sm`) both run on CPU. Local LLM chat uses LM Studio on whatever hardware you have — a modern 16 GB-RAM machine handles 7B-parameter models comfortably.
+No. Default embeddings (`nomic-embed-text-v1.5`, 768-d) and entity extraction (`en_core_web_sm`) both run on CPU. Local LLM chat uses LM Studio on whatever hardware you have — a modern 16 GB-RAM machine handles 7B-parameter models comfortably.
 
 ### Is my data sent to the cloud?
 

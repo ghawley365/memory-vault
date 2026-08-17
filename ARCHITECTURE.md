@@ -74,7 +74,7 @@ Everything lives in a single Postgres database with the `pgvector` extension. Mi
 - `id` UUID primary key
 - `space_id` references `memory_spaces`
 - `content` TEXT — the raw text
-- `embedding` vector(384) — `all-MiniLM-L6-v2` embedding
+- `embedding` vector(768) — `nomic-embed-text-v1.5` embedding (NULL until backfilled after a model migration)
 - `content_tsv` tsvector — auto-populated by trigger from `content`
 - `source` TEXT — origin (file path, URL, MCP tool that wrote it)
 - `speaker` TEXT — `'human'`, `'assistant'`, or null
@@ -122,7 +122,7 @@ Vector embeddings, full-text indexes, knowledge graph, tokens, and observability
 
 ## Embeddings
 
-**Model:** `all-MiniLM-L6-v2` from sentence-transformers — 384 dimensions, runs on CPU, no GPU required, no API calls.
+**Model:** `nomic-ai/nomic-embed-text-v1.5` from sentence-transformers — 768 dimensions, 2048-token context (configurable up to 8192), asymmetric query/document task prefixes, runs locally, no API calls. Swap via `EMBEDDING_MODEL` + `memory-vault reembed --all`.
 
 The model is downloaded on first ingest and cached under `~/.cache/huggingface`. In Docker, this is part of the image build, so the running container has zero first-run download.
 
@@ -401,8 +401,8 @@ One database means one backup story, one connection string, one operational ment
 **Why hybrid search instead of vector-only?**
 Pure vector search is great at paraphrase and concept; bad at exact strings. Pure keyword search is the opposite. RRF gets both with no parameter tuning.
 
-**Why `all-MiniLM-L6-v2` instead of a larger embedding model?**
-384 dimensions runs fast on CPU, fits in RAM on any modern laptop, and quality is good enough for personal memory. The goal is "anyone can run this," not maximum benchmark performance.
+**Why `nomic-embed-text-v1.5`?**
+137M parameters still runs on any modern laptop, but with a 2048-token context (vs 256 for MiniLM — long notes were previously embedded on their first ~200 words only), 768 dimensions, and asymmetric query/document prefixes for markedly better retrieval. Set both prefixes to "" to swap in a symmetric model.
 
 **Why spaCy + co-occurrence for the knowledge graph instead of an LLM?**
 LLM extraction couples graph quality to whichever model you happened to pick and bills you on every ingest. spaCy is fast, free, deterministic, and the limitations are documented honestly up front. Manual entity merging in the dashboard is not in v1.0.
