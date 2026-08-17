@@ -47,6 +47,8 @@ For user-facing setup and feature docs, see the [README](README.md). For contrib
                   │                         │
                   │  memory_spaces          │
                   │  chunks                 │
+                  │   (superseded_by →      │
+                  │    bi-temporal history) │
                   │  api_tokens             │
                   │  entities               │
                   │  relationships          │
@@ -140,7 +142,17 @@ The core differentiator. Pure vector search misses exact terms (model names, err
 score(d) = Σ_{r ∈ rankers} 1 / (k + rank_r(d))
 ```
 
-with `k = 60` (Cormack et al. 2009 default). Higher score wins. Documents found by both rankers score higher than documents found by only one. RRF uses ranks, not raw scores — no normalization needed between the cosine-similarity-of-vectors world and the `ts_rank`-of-tsvector world.
+with `k = 60` (Cormack et al. 2009 default). Higher score wins. Documents found by both rankers score higher than documents found by only one. RRF uses ranks, not raw scores — no normalization needed between the cosine-similarity-of-vectors world and the `ts_rank`-of-tsvector world. Both arms carry equal weight: down-weighting the keyword arm put an exact-identifier match that only the keyword arm can find below the entire vector list, where no result limit could reach it.
+
+The RRF score is then scaled — never added to — by importance and recency:
+
+```
+final(d) = score(d) × (1 + 0.15·importance + 0.05·recency)
+```
+
+As multipliers these break ties between similarly-ranked chunks but cannot invert a clear retrieval-rank difference. Additive boosts (up to +0.20 against a rank-1 contribution of ~0.016) had made metadata the de-facto primary sort key.
+
+**Supersession.** A chunk may be marked `superseded_by` another (bi-temporal replacement — `remember(supersedes=…)`, or `memory-vault consolidate --apply`). Superseded rows stay in the table as history but are excluded from both search arms, the live graph views, and active counts, so recall returns current truth rather than every version of it.
 
 ### Implementation
 
