@@ -41,6 +41,9 @@ class Settings:
     embedding_trust_remote_code: bool = (
         os.getenv("EMBEDDING_TRUST_REMOTE_CODE", "true").lower() == "true"
     )
+    # Cap token context: full 8192-token attention explodes memory on large
+    # batches (33 GiB MPS buffers); 2048 covers nearly all notes at 16x less.
+    embedding_max_seq_length: int = int(os.getenv("EMBEDDING_MAX_SEQ_LENGTH", "2048"))
 
     # Search
     rrf_k: int = int(os.getenv("RRF_K", "60"))

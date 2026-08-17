@@ -91,3 +91,12 @@ async def test_search_survives_null_embedding_chunks():
     assert res["status"] == "ok"
     contents = [r["content"] for r in res["results"]]
     assert any("properly embedded" in c for c in contents)
+
+
+def test_max_seq_length_is_capped():
+    """8192-token attention on MPS explodes memory (33GiB buffers on large
+    batches); a 2048 cap covers nearly all notes at 16x less memory."""
+    from src.services.embedding import _get_model
+
+    assert settings.embedding_max_seq_length == 2048
+    assert _get_model().max_seq_length == settings.embedding_max_seq_length

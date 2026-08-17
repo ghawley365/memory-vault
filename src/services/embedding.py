@@ -36,7 +36,13 @@ def _get_model() -> SentenceTransformer:
             settings.embedding_model,
             trust_remote_code=settings.embedding_trust_remote_code,
         )
-        logger.info("Model loaded — dimensions=%d", settings.embedding_dimensions)
+        if settings.embedding_max_seq_length:
+            _model.max_seq_length = settings.embedding_max_seq_length
+        logger.info(
+            "Model loaded — dimensions=%d, max_seq_length=%d",
+            settings.embedding_dimensions,
+            _model.max_seq_length,
+        )
     return _model
 
 
