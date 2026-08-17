@@ -24,6 +24,12 @@ os.environ.setdefault("DB_PORT", "5432")
 os.environ["DB_NAME"] = "memory_vault_test"
 os.environ.setdefault("DB_USER", "memory_vault")
 os.environ.setdefault("DB_PASSWORD", "memory_vault")
+# Hermetic model config: tests must not inherit an operator .env that
+# points at a different embedding model/dimension than the migrated
+# test schema (001 creates vector(384)).
+os.environ["EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
+os.environ["EMBEDDING_DIMENSIONS"] = "384"
+os.environ["EMBEDDING_TRUST_REMOTE_CODE"] = "false"
 # Asymmetric-embedding machinery under test (model-agnostic): task
 # prefixes + a distinctive seq cap, exercised against the default model.
 os.environ["EMBEDDING_QUERY_PREFIX"] = "search_query: "
