@@ -53,7 +53,12 @@ def main() -> None:
         help="Find near-duplicate memories; --apply supersedes the older of each pair",
     )
     p_cons.add_argument("--space", default=None, help="Limit to one space")
-    p_cons.add_argument("--threshold", type=float, default=0.95, help="Cosine similarity threshold")
+    p_cons.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="Cosine similarity threshold (default 0.99; minimum 0.8)",
+    )
     p_cons.add_argument("--limit", type=int, default=500, help="Max pairs per run")
     p_cons.add_argument(
         "--apply", action="store_true", help="Apply supersessions (default: dry run)"
@@ -162,9 +167,11 @@ async def _cmd_migrate() -> None:
     print("Migrations complete.")
 
 
-async def _cmd_consolidate(space: str | None, threshold: float, limit: int, apply: bool) -> None:
+async def _cmd_consolidate(
+    space: str | None, threshold: float | None, limit: int, apply: bool
+) -> None:
     from memory_vault.models.db import close_pool, fetch_one, init_pool
-    from memory_vault.services.consolidation import consolidate
+    from memory_vault.services.consolidation import DEFAULT_THRESHOLD, consolidate
 
     await init_pool()
     try:
@@ -176,13 +183,29 @@ async def _cmd_consolidate(space: str | None, threshold: float, limit: int, appl
                 sys.exit(1)
             space_id = row["id"]
 
-        report = await consolidate(space_id=space_id, threshold=threshold, apply=apply, limit=limit)
+        if threshold is None:
+            threshold = DEFAULT_THRESHOLD
+        try:
+            report = await consolidate(
+                space_id=space_id, threshold=threshold, apply=apply, limit=limit
+            )
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(2)
 
         mode = "APPLIED" if apply else "DRY RUN"
         print(f"\nConsolidation ({mode}) — threshold {threshold}")
-        print(f"Near-duplicate pairs found: {report['pairs_found']}")
+        if report["truncated"]:
+            print(
+                f"Near-duplicate pairs found: {report['pairs_found']} "
+                f"(showing {report['pairs_returned']} — raise --limit or re-run)"
+            )
+        else:
+            print(f"Near-duplicate pairs found: {report['pairs_found']}")
         if apply:
             print(f"Supersessions applied: {report['applied']}")
+            if report["skipped_chained"]:
+                print(f"Skipped (keeper superseded this run, re-run): {report['skipped_chained']}")
         for err in report["errors"]:
             print(f"  ! {err}")
 
@@ -192,8 +215,8 @@ async def _cmd_consolidate(space: str | None, threshold: float, limit: int, appl
             print(f"\n  sim={p['similarity']:.4f}")
             print(f"    older ({p['older_id'][:8]}): {older}")
             print(f"    newer ({p['newer_id'][:8]}): {newer}")
-        if report["pairs_found"] > 20:
-            print(f"\n  ... and {report['pairs_found'] - 20} more pairs")
+        if report["pairs_returned"] > 20:
+            print(f"\n  ... and {report['pairs_returned'] - 20} more pairs")
         if not apply and report["pairs_found"]:
             print("\nRe-run with --apply to supersede the older of each pair.")
     finally:
@@ -371,18 +394,27 @@ async def _cmd_status() -> None:
     print(f"Database: {health['status']}")
 
     if health["status"] == "healthy":
-        chunk_count = await fetch_one("SELECT count(*) AS n FROM chunks")
+        # "active" matches the MCP memory_status predicate: not forgotten,
+        # not superseded, importance > 0. Total is the raw row count.
+        active_pred = (
+            "(c.metadata->>'forgotten')::boolean IS NOT TRUE "
+            "AND c.superseded_by IS NULL AND c.importance > 0"
+        )
+        chunk_count = await fetch_one(
+            f"SELECT count(*) AS n, count(*) FILTER (WHERE {active_pred}) AS active FROM chunks c"
+        )
         spaces = await fetch_all(
-            """SELECT ms.name, count(c.id) AS chunks
+            f"""SELECT ms.name, count(c.id) AS chunks,
+                       count(c.id) FILTER (WHERE {active_pred}) AS active
                FROM memory_spaces ms
                LEFT JOIN chunks c ON c.space_id = ms.id
                GROUP BY ms.name ORDER BY ms.name"""
         )
 
-        print(f"Total chunks: {chunk_count['n']}")
+        print(f"Total chunks: {chunk_count['n']} ({chunk_count['active']} active)")
         print("Spaces:")
         for s in spaces:
-            print(f"  {s['name']}: {s['chunks']} chunks")
+            print(f"  {s['name']}: {s['chunks']} chunks ({s['active']} active)")
 
     await close_pool()
 

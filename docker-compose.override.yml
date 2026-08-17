@@ -14,3 +14,13 @@ services:
       EMBEDDING_DOCUMENT_PREFIX: "search_document: "
       EMBEDDING_TRUST_REMOTE_CODE: "true"
       EMBEDDING_MAX_SEQ_LENGTH: "2048"
+      # Pin the Hub revision: trust_remote_code executes the model repo's own
+      # architecture code, so an unpinned 'main' would run whatever lands there.
+      EMBEDDING_MODEL_REVISION: e9b6763023c676ca8431644204f50c2b100d9aab
+    volumes:
+      # Without this the model (~550 MB) is re-downloaded inside the container
+      # on every recreate, and the first embed of a fresh container blocks on it.
+      - hf_cache:/root/.cache/huggingface
+
+volumes:
+  hf_cache:

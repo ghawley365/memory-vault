@@ -153,7 +153,12 @@ _STOP_WORDS = {
 }
 
 _RRF_K = settings.rrf_k
-_FTS_WEIGHT = 0.5
+# Both arms carry equal weight, as ARCHITECTURE.md's RRF formula states
+# (score = SUM 1/(k + rank_r)). The keyword arm was previously down-weighted
+# to 0.5, which the old additive boosts masked; once boosts became
+# multiplicative, an FTS-only candidate's ceiling 0.5/(k+1) sat below vector
+# rank ~62 and exact identifier matches could never surface at any limit.
+_FTS_WEIGHT = 1.0
 _IMPORTANCE_WEIGHT = 0.15
 _RECENCY_HALF_LIFE_DAYS = 90
 _RECENCY_MAX_BOOST = 0.05

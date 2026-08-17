@@ -2,10 +2,12 @@
   "mcpServers": {
     "memory-vault": {
       "command": "python",
-      "args": ["-m", "src.mcp"],
+      "args": [
+        "-m",
+        "memory_vault.mcp"
+      ],
       "cwd": "/path/to/memory-vault",
       "env": {
-        "PYTHONPATH": "/path/to/memory-vault",
         "DB_HOST": "localhost",
         "DB_PORT": "5432",
         "DB_NAME": "memory_vault",

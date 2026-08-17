@@ -218,6 +218,15 @@ async def health_check() -> dict[str, Any]:
         return {"status": "unhealthy", "error": str(e)}
 
 
+def _render_migration(sql: str) -> str:
+    """Substitute the few settings a migration may depend on.
+
+    Only `{{EMBEDDING_DIMENSIONS}}` today (009): the vector column width is a
+    deployment choice, not a schema constant, and SQL cannot read the env.
+    """
+    return sql.replace("{{EMBEDDING_DIMENSIONS}}", str(int(settings.embedding_dimensions)))
+
+
 async def run_migrations() -> None:
     """Run all SQL migration files in order. Tracks applied migrations."""
     pool = await get_pool()
@@ -242,7 +251,7 @@ async def run_migrations() -> None:
                 continue
 
             logger.info("Applying migration: %s", migration.name)
-            sql = migration.read_text()
+            sql = _render_migration(migration.read_text())
             await conn.execute(sql)
             await conn.execute(
                 "INSERT INTO _migrations (filename) VALUES (%s)",

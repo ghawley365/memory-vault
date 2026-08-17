@@ -54,6 +54,7 @@ async def list_chunks(
 
     if not include_forgotten:
         where.append("(c.metadata->>'forgotten')::boolean IS NOT TRUE")
+        where.append("c.superseded_by IS NULL")
 
     if space:
         where.append("ms.name = %s")

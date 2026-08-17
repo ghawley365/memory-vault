@@ -21,6 +21,7 @@ async def list_spaces() -> SpaceList:
                   COUNT(c.id) FILTER (
                       WHERE c.importance > 0
                         AND (c.metadata->>'forgotten')::boolean IS NOT TRUE
+                        AND c.superseded_by IS NULL
                   ) AS chunk_count
            FROM memory_spaces ms
            LEFT JOIN chunks c ON c.space_id = ms.id

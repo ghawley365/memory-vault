@@ -14,6 +14,9 @@ dependencies = [
     "psycopg[binary]>=3.3.4,<4",
     "psycopg-pool>=3.3.1,<4",
     "sentence-transformers>=5.7.0,<6",
+    # Required by nomic-embed-text's remote architecture code (the model this
+    # deployment pins via EMBEDDING_MODEL); harmless for the default model.
+    "einops>=0.8,<1",
     "numpy>=2.4.6",
     "python-dotenv>=1.2.2",
     # 2.x replaced mcp.server.fastmcp with mcp.server.mcpserver, so 1.x and 2.x

@@ -5,8 +5,8 @@
 set -u
 
 DOCKER="/usr/local/bin/docker"
-COMPOSE_FILE="/Users/garyhawley/memory-vault/memory-vault/docker-compose.yml"
-LOG="/Users/garyhawley/memory-vault/memory-vault/logs/autostart.log"
+REPO_DIR="/Users/garyhawley/memory-vault/memory-vault"
+LOG="$REPO_DIR/logs/autostart.log"
 
 mkdir -p "$(dirname "$LOG")"
 echo "=== $(date) :: memory-vault autostart ===" >> "$LOG"
@@ -28,5 +28,10 @@ for i in $(seq 1 90); do
 done
 
 # 3. Bring the stack up (idempotent — no-op if already running).
-"$DOCKER" compose -f "$COMPOSE_FILE" up -d >>"$LOG" 2>&1
+#    Run from the repo dir with NO -f: an explicit -f replaces compose's file
+#    discovery, which silently drops docker-compose.override.yml — and with it
+#    the locally-built image and the 768-d embedding env, recreating the app
+#    from the upstream ghcr image at every login.
+cd "$REPO_DIR" || { echo "ERROR: $REPO_DIR missing" >> "$LOG"; exit 1; }
+"$DOCKER" compose up -d >>"$LOG" 2>&1
 echo "compose up exit: $?" >> "$LOG"

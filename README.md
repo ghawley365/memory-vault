@@ -138,6 +138,13 @@ memory-vault search "hybrid search architecture" --limit 5
 
 # Check status
 memory-vault status
+
+# Find near-duplicate memories (dry run; --apply supersedes the older of each pair)
+memory-vault consolidate --space default
+memory-vault consolidate --space default --apply
+
+# Re-embed after changing EMBEDDING_MODEL (or to backfill missing vectors)
+memory-vault reembed --all
 ```
 
 ---
@@ -147,6 +154,8 @@ memory-vault status
 - **Hybrid search** — semantic similarity + keyword matching combined, so you find the right memory even when you don't remember the exact words
 - **MCP integration** — four tools (`recall`, `remember`, `forget`, `memory_status`) that Claude can use natively during any session
 - **Local LLM chat** — query your own memories through LM Studio without sending anything to the cloud, with sources shown for every answer
+- **Supersession** — a new memory can explicitly replace an outdated one (`remember(supersedes=...)`); the old version leaves search and the graph but stays in the database as history, so recall returns current truth rather than every version of it
+- **Consolidation** — `memory-vault consolidate` finds near-duplicate memories and (with `--apply`) supersedes the older of each pair
 - **Knowledge graph** — entities and relationships extracted automatically, connections between things emerge over time
 - **Memory spaces** — separate namespaces for different projects or domains
 - **REST API** — integrate AI memory into any application
@@ -192,7 +201,7 @@ Memory Vault exposes four tools via the [Model Context Protocol](https://modelco
 | Tool | Description |
 |------|-------------|
 | `recall` | Search memories with hybrid search (vector + full-text + RRF) |
-| `remember` | Store a new memory — auto-classified and embedded |
+| `remember` | Store a new memory — auto-classified and embedded. `supersedes=<chunk_id>` marks an earlier memory as replaced by this one |
 | `forget` | Soft-delete a memory by chunk ID |
 | `memory_status` | Database health, chunk counts, embedding model info |
 

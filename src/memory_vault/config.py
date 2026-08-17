@@ -37,6 +37,10 @@ class Settings:
     embedding_document_prefix: str = os.getenv("EMBEDDING_DOCUMENT_PREFIX", "")
     # Some models (e.g. nomic-embed-text) ship custom architecture code on
     # the HF hub; loading them requires opting in. Off by default.
+    # Pin the Hub revision (commit sha) the model — and, under
+    # trust_remote_code, its architecture code — is loaded from. Unset means
+    # 'main': whatever the model repo currently serves.
+    embedding_model_revision: str | None = os.getenv("EMBEDDING_MODEL_REVISION") or None
     embedding_trust_remote_code: bool = (
         os.getenv("EMBEDDING_TRUST_REMOTE_CODE", "false").lower() == "true"
     )

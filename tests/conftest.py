@@ -30,6 +30,9 @@ os.environ.setdefault("DB_PASSWORD", "memory_vault")
 os.environ["EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 os.environ["EMBEDDING_DIMENSIONS"] = "384"
 os.environ["EMBEDDING_TRUST_REMOTE_CODE"] = "false"
+# Hermeticity: a revision pin in the developer's .env belongs to THEIR model.
+# Leaving it set would ask the Hub for that sha of the test model and fail.
+os.environ["EMBEDDING_MODEL_REVISION"] = ""
 # Asymmetric-embedding machinery under test (model-agnostic): task
 # prefixes + a distinctive seq cap, exercised against the default model.
 os.environ["EMBEDDING_QUERY_PREFIX"] = "search_query: "

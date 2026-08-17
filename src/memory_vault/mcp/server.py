@@ -26,6 +26,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -328,6 +329,7 @@ async def remember(
                ON CONFLICT (space_id, (metadata->>'content_hash'))
                    WHERE metadata->>'content_hash' IS NOT NULL
                      AND metadata->>'source_file' IS NULL
+                     AND superseded_by IS NULL
                    DO NOTHING
                RETURNING id""",
             (chunk_id, space_id, speaker, text, str(embedding), f"mcp:{source}", importance, meta),
@@ -339,17 +341,26 @@ async def remember(
             existing = await fetch_one(
                 """SELECT id FROM chunks
                    WHERE space_id = %s
-                     AND metadata->>'content_hash' = %s""",
+                     AND metadata->>'content_hash' = %s
+                     AND superseded_by IS NULL""",
                 (space_id, content_hash),
             )
-            return _dumps(
-                {
-                    "stored": False,
-                    "duplicate": True,
-                    "existing_chunk_id": str(existing["id"]) if existing else None,
-                    "message": "This memory already exists (exact duplicate).",
-                }
-            )
+            dup_response: dict[str, Any] = {
+                "stored": False,
+                "duplicate": True,
+                "existing_chunk_id": str(existing["id"]) if existing else None,
+                "message": "This memory already exists (exact duplicate).",
+            }
+            # The caller asked to replace an earlier memory. The replacement text
+            # already exists, so the existing chunk IS the replacement — honour
+            # the intent rather than silently dropping it.
+            if supersedes and existing is not None:
+                try:
+                    await supersede(supersedes, str(existing["id"]))
+                    dup_response["superseded_chunk_id"] = supersedes
+                except Exception as se:  # noqa: BLE001 — surfaced to the caller
+                    dup_response["supersede_error"] = str(se)
+            return _dumps(dup_response)
 
         # Best-effort graph extraction — mirrors REST/file ingestion. The
         # helper swallows extraction errors so the chunk stays committed;
@@ -370,8 +381,9 @@ async def remember(
             try:
                 await supersede(supersedes, chunk_id)
                 response["superseded_chunk_id"] = supersedes
-            except ValueError as se:
-                # The new memory is stored either way — report the failure.
+            except Exception as se:  # noqa: BLE001
+                # The new memory is committed either way — never report a stored
+                # chunk as stored:false; surface the supersede failure instead.
                 response["supersede_error"] = str(se)
 
         return _dumps(response)
@@ -589,7 +601,6 @@ async def memory_status() -> str:
                        WHERE c.importance > 0
                          AND (c.metadata->>'forgotten')::boolean IS NOT TRUE
                      AND c.superseded_by IS NULL
-                         AND c.superseded_by IS NULL
                    ) AS active
             FROM memory_spaces ms
             LEFT JOIN chunks c ON c.space_id = ms.id
