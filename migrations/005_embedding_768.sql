@@ -8,6 +8,14 @@
 --
 -- run it immediately after migrating.
 
+-- Dockerized Postgres defaults to a 64MB /dev/shm; a parallel HNSW build
+-- requests a maintenance_work_mem-sized shared segment and fails. The
+-- column is all-NULL at this point (nothing to index), so a serial,
+-- small-memory build is instant. Backfill inserts populate the index
+-- incrementally. Both SETs are transaction-local.
+SET LOCAL maintenance_work_mem = '48MB';
+SET LOCAL max_parallel_maintenance_workers = 0;
+
 DROP INDEX IF EXISTS chunks_embedding_idx;
 
 ALTER TABLE chunks
