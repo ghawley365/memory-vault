@@ -46,7 +46,7 @@ from src.models.db import (  # noqa: E402
     init_pool,
 )
 from src.services.embedding import MODEL_NAME, embed  # noqa: E402
-from src.services.search import hybrid_search, resolve_space_names  # noqa: E402
+from src.services.search import hybrid_search, log_query, resolve_space_names  # noqa: E402
 from src.services.supersession import supersede  # noqa: E402
 
 logging.basicConfig(
@@ -196,6 +196,9 @@ async def recall(
             since=since_dt,
             limit=limit,
         )
+
+        # Observability: memory_status reads queries_24h from query_log.
+        await log_query(query, space_ids or None, results, elapsed_ms)
 
         formatted = []
         for r in results:
