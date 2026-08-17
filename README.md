@@ -141,7 +141,8 @@ memory-vault status
 
 # Find near-duplicate memories (dry run; --apply supersedes the older of each pair)
 memory-vault consolidate --space default
-memory-vault consolidate --space default --apply
+memory-vault consolidate --space default --apply                    # identical text only
+memory-vault consolidate --space default --apply --near-duplicates  # also merge near-matches
 
 # Re-embed after changing EMBEDDING_MODEL (or to backfill missing vectors)
 memory-vault reembed --all
@@ -155,7 +156,7 @@ memory-vault reembed --all
 - **MCP integration** — four tools (`recall`, `remember`, `forget`, `memory_status`) that Claude can use natively during any session
 - **Local LLM chat** — query your own memories through LM Studio without sending anything to the cloud, with sources shown for every answer
 - **Supersession** — a new memory can explicitly replace an outdated one (`remember(supersedes=...)`); the old version leaves search and the graph but stays in the database as history, so recall returns current truth rather than every version of it
-- **Consolidation** — `memory-vault consolidate` finds near-duplicate memories and (with `--apply`) supersedes the older of each pair
+- **Consolidation** — `memory-vault consolidate` finds near-duplicate memories and (with `--apply`) supersedes the older of each pair. `--apply` merges only *identical* text by default: on a real 22.9k-chunk corpus, 62% of the pairs that cleared both the similarity threshold and the identifier guard without being identical turned out to carry different information. Review the dry run, then opt in with `--near-duplicates`
 - **Knowledge graph** — entities and relationships extracted automatically, connections between things emerge over time
 - **Memory spaces** — separate namespaces for different projects or domains
 - **REST API** — integrate AI memory into any application

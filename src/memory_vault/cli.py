@@ -63,6 +63,12 @@ def main() -> None:
     p_cons.add_argument(
         "--apply", action="store_true", help="Apply supersessions (default: dry run)"
     )
+    p_cons.add_argument(
+        "--near-duplicates",
+        action="store_true",
+        help="With --apply, also supersede pairs whose text is not identical "
+        "(review the dry run first: high similarity alone is weak evidence)",
+    )
 
     # reembed
     p_reembed = sub.add_parser(
@@ -123,7 +129,11 @@ def main() -> None:
     if args.command == "migrate":
         asyncio.run(_cmd_migrate())
     elif args.command == "consolidate":
-        asyncio.run(_cmd_consolidate(args.space, args.threshold, args.limit, args.apply))
+        asyncio.run(
+            _cmd_consolidate(
+                args.space, args.threshold, args.limit, args.apply, args.near_duplicates
+            )
+        )
     elif args.command == "reembed":
         asyncio.run(_cmd_reembed(args.space, args.batch, args.all))
     elif args.command == "ingest":
@@ -168,7 +178,11 @@ async def _cmd_migrate() -> None:
 
 
 async def _cmd_consolidate(
-    space: str | None, threshold: float | None, limit: int, apply: bool
+    space: str | None,
+    threshold: float | None,
+    limit: int,
+    apply: bool,
+    near_duplicates: bool = False,
 ) -> None:
     from memory_vault.models.db import close_pool, fetch_one, init_pool
     from memory_vault.services.consolidation import DEFAULT_THRESHOLD, consolidate
@@ -187,7 +201,11 @@ async def _cmd_consolidate(
             threshold = DEFAULT_THRESHOLD
         try:
             report = await consolidate(
-                space_id=space_id, threshold=threshold, apply=apply, limit=limit
+                space_id=space_id,
+                threshold=threshold,
+                apply=apply,
+                limit=limit,
+                near_duplicates=near_duplicates,
             )
         except ValueError as e:
             print(f"Error: {e}")
@@ -206,6 +224,11 @@ async def _cmd_consolidate(
             print(f"Supersessions applied: {report['applied']}")
             if report["skipped_chained"]:
                 print(f"Skipped (keeper superseded this run, re-run): {report['skipped_chained']}")
+            if report["skipped_not_identical"]:
+                print(
+                    f"Skipped (text differs; review, then --near-duplicates): "
+                    f"{report['skipped_not_identical']}"
+                )
         for err in report["errors"]:
             print(f"  ! {err}")
 

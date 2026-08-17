@@ -209,3 +209,31 @@ async def test_superseded_content_can_be_stored_again():
     res = json.loads(await mcp_server.recall(query="raw log retention days", limit=10))
     ids = {r["chunk_id"] for r in res["results"]}
     assert again["chunk_id"] in ids
+
+
+@pytest.mark.asyncio
+async def test_supersede_resolves_a_superseded_replacement_to_its_live_terminal():
+    """`superseded_by` must always point at a LIVE chunk.
+
+    Consolidating a cluster of duplicates supersedes them one pair at a time,
+    and a chunk chosen as the keeper can itself be superseded on a later pass.
+    Left alone that builds A -> B -> C chains where A points at a chunk no
+    reader can see (observed 621 times in one real consolidation run), so a
+    replacement that is itself superseded resolves to the end of its chain.
+    """
+    from memory_vault.mcp import server as mcp_server
+    from memory_vault.models.db import fetch_one
+    from memory_vault.services.supersession import supersede
+
+    a = json.loads(await mcp_server.remember(text="Cluster member A — retention 30 days."))
+    b = json.loads(await mcp_server.remember(text="Cluster member B — retention 60 days."))
+    c = json.loads(await mcp_server.remember(text="Cluster member C — retention 90 days."))
+
+    await supersede(b["chunk_id"], c["chunk_id"])  # B -> C
+    await supersede(a["chunk_id"], b["chunk_id"])  # A -> B, but B is superseded
+
+    row = await fetch_one("SELECT superseded_by FROM chunks WHERE id = %s", (a["chunk_id"],))
+    assert str(row["superseded_by"]) == c["chunk_id"], "A should point at the live terminal C"
+
+    terminal = await fetch_one("SELECT superseded_by FROM chunks WHERE id = %s", (c["chunk_id"],))
+    assert terminal["superseded_by"] is None

@@ -65,7 +65,9 @@ async def test_consolidate_apply_marks_older_superseded():
     a = await _remember(TEXT_V1)
     b = await _remember(TEXT_V2)
 
-    report = await consolidate(threshold=0.9, apply=True)
+    # near_duplicates=True: these two differ in wording, and merging text that
+    # differs is opt-in (see test_apply_supersedes_only_identical_text_by_default).
+    report = await consolidate(threshold=0.9, apply=True, near_duplicates=True)
     assert report["applied"] >= 1
 
     from memory_vault.models.db import fetch_one
@@ -171,3 +173,30 @@ async def test_distinct_sequential_milestones_are_not_paired():
     paired = {(p["older_id"], p["newer_id"]) for p in pairs}
     assert (a["chunk_id"], b["chunk_id"]) not in paired
     assert (b["chunk_id"], a["chunk_id"]) not in paired
+
+
+@pytest.mark.asyncio
+async def test_apply_supersedes_only_identical_text_by_default():
+    """Measured on a real 22.9k-chunk corpus: of the near-duplicate pairs that
+    cleared BOTH cosine >= 0.99 and the identifier guard but were not
+    byte-identical, 62% (41/66) turned out to carry different information when
+    adjudicated. Cosine is therefore not sufficient evidence to merge
+    non-identical text automatically — `apply` supersedes only byte-identical
+    pairs unless the caller explicitly opts in."""
+    from memory_vault.mcp import server as mcp_server
+    from memory_vault.models.db import fetch_one
+    from memory_vault.services.consolidation import consolidate
+
+    a = json.loads(await mcp_server.remember(text="The nightly build runs at 02:00 UTC."))
+    b = json.loads(await mcp_server.remember(text="The nightly build runs at 02:00 UTC!"))
+    assert b["stored"] is True and a["stored"] is True
+
+    report = await consolidate(threshold=0.9, apply=True)
+    assert report["skipped_not_identical"] >= 1
+    row = await fetch_one("SELECT superseded_by FROM chunks WHERE id = %s", (a["chunk_id"],))
+    assert row["superseded_by"] is None, "near-duplicate merged without opt-in"
+
+    report2 = await consolidate(threshold=0.9, apply=True, near_duplicates=True)
+    assert report2["applied"] >= 1
+    row2 = await fetch_one("SELECT superseded_by FROM chunks WHERE id = %s", (a["chunk_id"],))
+    assert row2["superseded_by"] is not None

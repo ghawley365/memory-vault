@@ -145,10 +145,20 @@ async def consolidate(
     threshold: float = DEFAULT_THRESHOLD,
     apply: bool = False,
     limit: int = 500,
+    near_duplicates: bool = False,
 ) -> dict[str, Any]:
     """
     Detect near-duplicate pairs; with apply=True supersede the older of
     each pair. Returns a report of what was found and (optionally) done.
+
+    By default `apply` supersedes only pairs whose text is IDENTICAL. High
+    cosine similarity is not sufficient evidence to merge text that differs:
+    adjudicating the pairs that cleared cosine >= 0.99 AND the identifier
+    guard on a real 22.9k-chunk corpus found 62% of the non-identical ones
+    (41 of 66) carried genuinely different information — a changed file path,
+    an added platform, a sentence present in one copy only. Set
+    `near_duplicates=True` to include them, ideally after reviewing the
+    dry-run output.
     """
     _validate(threshold, limit)
     fetched = await find_duplicate_pairs(space_id=space_id, threshold=threshold, limit=limit)
@@ -160,11 +170,17 @@ async def consolidate(
 
     applied = 0
     skipped_chained = 0
+    skipped_not_identical = 0
     errors: list[str] = []
     if apply:
         superseded_ids: set[str] = set()
         for pair in pairs:
             old_id, new_id = pair["older_id"], pair["newer_id"]
+            if not near_duplicates and (
+                pair["older_content"].strip() != pair["newer_content"].strip()
+            ):
+                skipped_not_identical += 1
+                continue
             if old_id in superseded_ids:
                 continue
             if new_id in superseded_ids:
@@ -186,6 +202,7 @@ async def consolidate(
         "truncated": truncated,
         "applied": applied,
         "skipped_chained": skipped_chained,
+        "skipped_not_identical": skipped_not_identical,
         "errors": errors,
         "pairs": pairs,
     }

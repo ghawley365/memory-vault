@@ -44,9 +44,32 @@ async def supersede(old_chunk_id: str, new_chunk_id: str) -> None:
     if old["superseded_by"] is not None:
         raise ValueError(f"Chunk {old_chunk_id} is already superseded by {old['superseded_by']}.")
 
-    new = await fetch_one("SELECT id, space_id FROM chunks WHERE id = %s", (new_chunk_id,))
+    new = await fetch_one(
+        "SELECT id, space_id, superseded_by FROM chunks WHERE id = %s", (new_chunk_id,)
+    )
     if not new:
         raise ValueError(f"Superseding chunk not found: {new_chunk_id}")
+
+    # `superseded_by` must point at a chunk a reader can actually see. A keeper
+    # can itself be superseded later (consolidating a cluster of duplicates
+    # supersedes them pair by pair), so follow the chain to its live end rather
+    # than leaving a pointer into history.
+    seen = {str(old_chunk_id), str(new_chunk_id)}
+    while new["superseded_by"] is not None:
+        next_id = str(new["superseded_by"])
+        if next_id in seen:
+            raise ValueError(f"Supersession chain from {new_chunk_id} is cyclic at {next_id}.")
+        seen.add(next_id)
+        nxt = await fetch_one(
+            "SELECT id, space_id, superseded_by FROM chunks WHERE id = %s", (next_id,)
+        )
+        if not nxt:
+            break  # dangling pointer (FK is ON DELETE SET NULL); stop here
+        new = nxt
+        new_chunk_id = next_id
+
+    if str(new["id"]) == str(old_chunk_id):
+        raise ValueError("A chunk cannot supersede itself.")
     if new["space_id"] != old["space_id"]:
         raise ValueError(
             "Cannot supersede across spaces: the replacement must be stored in the "
