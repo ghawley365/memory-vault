@@ -7,6 +7,178 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-23
+
+Ten bug fixes and one new capability. Most of these are the kind that only
+surface once you have been using Memory Vault for a while: a budget that was
+not really a cap, a chunk limit that was not really a limit, forgotten memories
+that never actually went away.
+
+Nothing here requires action on upgrade.
+
+### Added
+
+- **Forgotten memories can be purged.** `forget` is a soft delete so a memory
+  can be recovered, but nothing ever removed the rows afterwards — and editing a
+  memory means forget plus remember, so a vault that is edited often grew a dead
+  row per edit. `purge_forgotten(older_than_days=30)` over MCP, or
+  `memory-vault purge-forgotten` on the command line, deletes them for good.
+  It is deliberately not automatic: Memory Vault runs no timer, so nothing
+  deletes your memories unless you ask. The default only removes what was
+  forgotten at least a month ago, so purging right after an accidental forget
+  still spares it. ([#74])
+- **`memory_status` reports `forgotten_chunks`.** The number was derivable by
+  subtracting, but naming it is what tells you whether purging is worth doing.
+  ([#74])
+
+### Fixed
+
+- **A single oversized result could blow the token budget.** Both the chat and
+  MCP budget helpers admitted one arbitrarily large result — 2540 tokens against
+  a 200 budget in the reported case, and the caller was not even told it had
+  happened. Keeping at least one result is deliberate, since an answer with no
+  context is worse than one with trimmed context; sending it whole was not. The
+  final result is now trimmed to what is left. ([#99])
+- **`max_words` was not an upper bound.** A sentence longer than the limit had
+  no sentence boundary to split on, so it passed through whole — and because the
+  flush was guarded on the accumulator being non-empty, an oversized *first*
+  sentence escaped even with more text after it. Word splitting is now the
+  floor under everything else. ([#103])
+- **Uploaded files recorded the server's temporary path as their source.** Every
+  chunk from an upload pointed at something like `/tmp/tmpabcd1234.md`, deleted
+  the moment the request ended. Uploads now record the filename you sent — which
+  also repairs re-upload deduplication, since a path that changes every request
+  could never match. ([#101])
+- **Repeated entity occurrences collapsed to one graph mention.** "Alice met
+  Alice" recorded one mention rather than two. Entity identity is still
+  deduplicated — repeated mentions resolve to one node — but each occurrence now
+  keeps its own offsets. Expect mention counts to rise as content is
+  re-ingested. ([#110])
+- **An empty environment variable crashed at start-up.** `os.getenv` falls back
+  to its default only when a key is absent, so `DB_PORT=""` reached `int()` and
+  raised. Config generated from a manifest emits every declared key, empty where
+  it has no value, which made this a first-run failure. Empty now means unset,
+  and a malformed value names the setting instead of failing from inside the
+  standard library. ([#181])
+- **Concurrent creation of the same space returned 500.** Two callers could both
+  see no existing row and both insert; the loser hit the unique constraint. The
+  insert is now authoritative and the loser gets the same 409 as any other
+  duplicate. ([#112])
+- **A malformed UUID in a path returned 500.** `not-a-valid-identifier` reached
+  PostgreSQL and became a server error. Those routes now reject it at the
+  boundary without opening a database connection. ([#102])
+- **Adding a file after a finished batch re-uploaded the completed ones.** The
+  submit loop ran over every file regardless of status, so a file already
+  ingested went again — while the button correctly offered to ingest only the
+  new one. ([#106])
+- **Stopping a chat left the answer marked as streaming.** The input unlocked
+  and the request ended, but the turn kept showing "Thinking…" indefinitely. It
+  now reaches a terminal state while keeping whatever text had arrived. ([#107])
+
+### Contributors
+
+- [@lcj-codex-coder] (Leonard Janke — lcjanke2020, working with GPT-5.6-Sol
+  through OpenAI Codex) — reported [#99], [#101], [#102], [#103], [#106],
+  [#107], [#110], [#112]
+- [@git-pharos] — reported [#74], the unbounded growth that `purge_forgotten`
+  answers
+
+## [1.3.0] — 2026-08-23
+
+Least privilege. The containers no longer run as root, the database role that
+serves requests can no longer change your schema, API tokens can expire, and the
+threat model that describes all of it is now written down.
+
+Nothing here requires action on upgrade. The container hardening applies
+automatically; the database roles and token expiry are opt-in and existing
+deployments keep working unchanged.
+
+### Added
+
+- **A published threat model.** [`docs/threat-model.md`](docs/threat-model.md)
+  sets out what Memory Vault protects, what it assumes about its environment, and
+  what it explicitly does **not** defend against — stolen tokens carry full
+  access, spaces are not a security boundary, content is stored unencrypted, and
+  prompt injection is not filtered. It also covers hardening a deployment that
+  goes beyond a single machine: token hygiene, network scoping, egress policy,
+  TLS termination, and rate limiting. ([#18])
+- **Optional expiry for API tokens.** `memory-vault token create <name>
+  --expires-in-days N`. A token created without an expiry never lapses, so every
+  token issued before this release keeps working. `token list` gains an
+  `EXPIRES` column and marks lapsed tokens. An expired token is reported
+  differently from a revoked one, because an operator debugging a 401 needs to
+  know which.
+- **Least-privilege database roles.** Migration 009 defines
+  `memory_vault_app` (read and write rows), `memory_vault_readonly` (select
+  only), and `memory_vault_migrator` (schema changes). They are group roles with
+  no login of their own, so nothing changes until you adopt them —
+  `DB_MIGRATION_USER` and `DB_MIGRATION_PASSWORD` let migrations run as a role
+  the serving connection does not use. Adoption steps are in the threat model.
+
+### Changed
+
+- **The containers run as a non-root user and need no writable filesystem.**
+  Both images create a system user (uid 10001), and the shipped compose file adds
+  a read-only root filesystem, drops all Linux capabilities, and sets
+  `no-new-privileges`. The embedding model is now baked into the image at build
+  time, which makes that possible and also removes a network round trip from the
+  first query after every start.
+
+### Fixed
+
+- **A read-only container no longer refuses to start when it cannot write its
+  log file.** The existing guard covered creating the log directory, but the
+  directory ships inside the image — so the failure landed on opening the file
+  instead, and a deployment with a read-only root filesystem and no log volume
+  crashed at boot. It now warns and continues logging to stderr.
+- **The threat model's description of the authentication boundary was wrong.**
+  `/docs`, `/redoc` and `/openapi.json` are unauthenticated and exempt from rate
+  limiting, which the document did not say. No memory content is exposed and
+  every documented operation still requires a token, but on a publicly reachable
+  host they describe the API to anonymous visitors. The document now lists them
+  and suggests blocking them at a reverse proxy.
+
+### Security
+
+- **Public artifacts are scanned in CI.** Local git hooks only ever see a command
+  line, so anything written through the GitHub API — a pull request body passed
+  as a file, an issue edited in the browser, release notes — never reached one.
+  A workflow now scans pull request and issue text, release notes, and added
+  lines in a diff. It fails closed: a missing pattern file, an empty one, or a
+  malformed pattern all fail the run.
+
+### Dependencies
+
+- ruff `>=0.16.3`, setuptools `>=84.0.0`, uvicorn `>=0.52.3`, spacy `>=3.8.15`
+  ([#158], [#160], [#169])
+- Eight web dependencies updated as a group, including cytoscape 3.34.1 and
+  vite 8.2.2 ([#170])
+
+## [1.2.1] — 2026-08-18
+
+Patch release. Two retrieval and observability fixes, both reported and fixed
+by an outside contributor running Memory Vault at scale.
+
+### Fixed
+
+- **Importance and recency boosts no longer bury exact matches.** The boosts
+  were added to the RRF score, but the maximum boost (0.20) was roughly
+  eighteen times the entire spread between a rank-1 and a rank-50 result
+  (~0.011). Relevance was effectively the tie-breaker and importance the
+  primary sort key, so a recent high-importance note could outrank an exact
+  match on an unrelated query. The boosts now scale the retrieval score
+  instead of being added to it: they still order results of comparable
+  relevance, but can no longer invert a clear rank difference. ([#163], [#165])
+- **MCP `recall` now records queries in `query_log`.** The REST search endpoint
+  was the only caller of the query logger, so on an MCP-only deployment
+  `memory_status` and `memory://stats` always reported `queries_24h: 0` and a
+  null average latency however much the vault was used. ([#164])
+
+### Contributors
+
+- [@ghawley365] (Gary Hawley) — reported and fixed [#163] (via [#165]) and
+  [#164]
+
 ## [1.2.0] — 2026-08-17
 
 Correctness release. Nine bugs fixed, two features added, and the MCP SDK
@@ -428,7 +600,11 @@ assistants and the apps you build on top of them.
 - 163 tests passing in CI against a real Postgres + pgvector service
   container.
 
-[Unreleased]: https://github.com/MihaiBuilds/memory-vault/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/MihaiBuilds/memory-vault/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/MihaiBuilds/memory-vault/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/MihaiBuilds/memory-vault/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/MihaiBuilds/memory-vault/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/MihaiBuilds/memory-vault/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/MihaiBuilds/memory-vault/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/MihaiBuilds/memory-vault/compare/v1.0.10...v1.1.0
 [1.0.10]: https://github.com/MihaiBuilds/memory-vault/compare/v1.0.9...v1.0.10
@@ -443,6 +619,7 @@ assistants and the apps you build on top of them.
 [1.0.1]: https://github.com/MihaiBuilds/memory-vault/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MihaiBuilds/memory-vault/releases/tag/v1.0.0
 
+[#18]: https://github.com/MihaiBuilds/memory-vault/issues/18
 [#19]: https://github.com/MihaiBuilds/memory-vault/issues/19
 [#47]: https://github.com/MihaiBuilds/memory-vault/pull/47
 [#52]: https://github.com/MihaiBuilds/memory-vault/pull/52
@@ -462,6 +639,15 @@ assistants and the apps you build on top of them.
 [#96]: https://github.com/MihaiBuilds/memory-vault/pull/96
 [#97]: https://github.com/MihaiBuilds/memory-vault/issues/97
 [#98]: https://github.com/MihaiBuilds/memory-vault/issues/98
+[#99]: https://github.com/MihaiBuilds/memory-vault/issues/99
+[#101]: https://github.com/MihaiBuilds/memory-vault/issues/101
+[#102]: https://github.com/MihaiBuilds/memory-vault/issues/102
+[#103]: https://github.com/MihaiBuilds/memory-vault/issues/103
+[#106]: https://github.com/MihaiBuilds/memory-vault/issues/106
+[#107]: https://github.com/MihaiBuilds/memory-vault/issues/107
+[#110]: https://github.com/MihaiBuilds/memory-vault/issues/110
+[#112]: https://github.com/MihaiBuilds/memory-vault/issues/112
+[#181]: https://github.com/MihaiBuilds/memory-vault/issues/181
 [#100]: https://github.com/MihaiBuilds/memory-vault/issues/100
 [#104]: https://github.com/MihaiBuilds/memory-vault/issues/104
 [#105]: https://github.com/MihaiBuilds/memory-vault/issues/105
@@ -494,9 +680,17 @@ assistants and the apps you build on top of them.
 [#153]: https://github.com/MihaiBuilds/memory-vault/pull/153
 [#154]: https://github.com/MihaiBuilds/memory-vault/pull/154
 [#155]: https://github.com/MihaiBuilds/memory-vault/pull/155
+[#163]: https://github.com/MihaiBuilds/memory-vault/issues/163
+[#164]: https://github.com/MihaiBuilds/memory-vault/pull/164
+[#165]: https://github.com/MihaiBuilds/memory-vault/pull/165
+[#158]: https://github.com/MihaiBuilds/memory-vault/pull/158
+[#160]: https://github.com/MihaiBuilds/memory-vault/pull/160
+[#169]: https://github.com/MihaiBuilds/memory-vault/pull/169
+[#170]: https://github.com/MihaiBuilds/memory-vault/pull/170
 
 [@hmodes]: https://github.com/hmodes
 [@git-pharos]: https://github.com/git-pharos
 [@lcj-codex-coder]: https://github.com/lcj-codex-coder
 [@gatesl]: https://github.com/gatesl
 [@skorten]: https://github.com/skorten
+[@ghawley365]: https://github.com/ghawley365

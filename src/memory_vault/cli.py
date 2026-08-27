@@ -81,6 +81,20 @@ def main() -> None:
         "--all", action="store_true", help="Re-embed every chunk, not just NULLs"
     )
 
+    # purge-forgotten
+    p_purge = sub.add_parser(
+        "purge-forgotten",
+        help="Permanently delete memories forgotten more than N days ago",
+    )
+    p_purge.add_argument(
+        "--older-than",
+        type=int,
+        default=30,
+        metavar="DAYS",
+        help="Only purge memories forgotten at least this many days ago (default: 30)",
+
+    )
+
     # mcp
     sub.add_parser("mcp", help="Start the MCP server (stdio transport)")
 
@@ -93,6 +107,13 @@ def main() -> None:
 
     p_tok_create = token_sub.add_parser("create", help="Create a new API token")
     p_tok_create.add_argument("name", help="A friendly name for the token")
+    p_tok_create.add_argument(
+        "--expires-in-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Expire the token after N days (default: never expires)",
+    )
 
     p_tok_revoke = token_sub.add_parser("revoke", help="Revoke a token by prefix")
     p_tok_revoke.add_argument("prefix", help="Token prefix (first 11 chars)")
@@ -136,6 +157,9 @@ def main() -> None:
         )
     elif args.command == "reembed":
         asyncio.run(_cmd_reembed(args.space, args.batch, args.all))
+    elif args.command == "purge-forgotten":
+        asyncio.run(_cmd_purge_forgotten(args.older_than))
+
     elif args.command == "ingest":
         asyncio.run(_cmd_ingest(args.file, args.space))
     elif args.command == "search":
@@ -168,10 +192,48 @@ def main() -> None:
         cli_diagnose(Path(args.out_dir) if args.out_dir else None)
 
 
-async def _cmd_migrate() -> None:
-    from memory_vault.models.db import close_pool, init_pool, run_migrations
+async def _cmd_purge_forgotten(older_than_days: int) -> None:
+    """Permanently delete memories forgotten more than `older_than_days` ago.
+
+    Exposed on the CLI as well as over MCP so an operator can schedule it —
+    their cron, their retention policy, their machine. Memory Vault runs no
+    timer of its own; deleting someone's notes should be something they asked
+    for, not something that happens while they are not looking.
+    """
+    import json
+
+    from memory_vault.mcp.server import purge_forgotten
+    from memory_vault.models.db import close_pool, init_pool
+
+    if older_than_days < 0:
+        print("--older-than cannot be negative.")
+        sys.exit(1)
 
     await init_pool()
+    try:
+        result = json.loads(await purge_forgotten(older_than_days=older_than_days))
+        if not result.get("success"):
+            print(f"Purge failed: {result.get('error', 'unknown error')}")
+            sys.exit(1)
+        print(
+            f"Purged {result['purged']} memory(ies) forgotten more than "
+            f"{older_than_days} day(s) ago. {result['remaining']} forgotten "
+            f"memory(ies) remain."
+        )
+    finally:
+        await close_pool()
+
+
+async def _cmd_migrate() -> None:
+    from memory_vault.config import settings
+    from memory_vault.models.db import close_pool, init_pool, run_migrations
+
+    # Migrations are the only path that needs DDL rights. When
+    # DB_MIGRATION_USER is unset this is the same credential as the runtime
+    # one, which is what every single-role deployment already does.
+    if settings.db_migration_user:
+        print(f"Applying migrations as: {settings.db_migration_user}")
+    await init_pool(conninfo=settings.migration_database_url)
     await run_migrations()
     await close_pool()
     print("Migrations complete.")
@@ -334,12 +396,18 @@ async def _cmd_token(args) -> None:
     await init_pool()
     try:
         if args.token_cmd == "create":
-            plaintext = await create_token(args.name)
+            expires_in_days = getattr(args, "expires_in_days", None)
+            if expires_in_days is not None and expires_in_days < 1:
+                print("--expires-in-days must be 1 or greater.")
+                sys.exit(1)
+            plaintext = await create_token(args.name, expires_in_days)
             print("")
             print("  Token created. Copy it now — it will NOT be shown again.")
             print("")
             print(f"  Name:  {args.name}")
             print(f"  Token: {plaintext}")
+            if expires_in_days is not None:
+                print(f"  Expires: in {expires_in_days} day{'s' if expires_in_days != 1 else ''}")
             print("")
             print("  Use it with: Authorization: Bearer <token>")
             print("")
@@ -352,17 +420,30 @@ async def _cmd_token(args) -> None:
                 sys.exit(1)
         elif args.token_cmd == "list":
             rows = await fetch_all(
-                """SELECT name, token_prefix, created_at, last_used_at, revoked_at
+                """SELECT name, token_prefix, created_at, last_used_at, revoked_at,
+                          expires_at,
+                          (expires_at IS NOT NULL AND expires_at <= now()) AS is_expired
                    FROM api_tokens ORDER BY created_at DESC"""
             )
             if not rows:
                 print("No tokens yet. Create one with: memory-vault token create <name>")
                 return
-            print(f"{'NAME':<20} {'PREFIX':<14} {'CREATED':<22} {'STATUS'}")
+            print(f"{'NAME':<20} {'PREFIX':<14} {'CREATED':<22} {'EXPIRES':<22} {'STATUS'}")
             for r in rows:
-                status_txt = "revoked" if r["revoked_at"] else "active"
+                # Revoked wins over expired: revocation is a decision someone
+                # made, expiry is just time passing.
+                if r["revoked_at"]:
+                    status_txt = "revoked"
+                elif r["is_expired"]:
+                    status_txt = "expired"
+                else:
+                    status_txt = "active"
                 created = str(r["created_at"])[:19]
-                print(f"{r['name']:<20} {r['token_prefix']:<14} {created:<22} {status_txt}")
+                expires = str(r["expires_at"])[:19] if r["expires_at"] else "never"
+                print(
+                    f"{r['name']:<20} {r['token_prefix']:<14} "
+                    f"{created:<22} {expires:<22} {status_txt}"
+                )
     finally:
         await close_pool()
 

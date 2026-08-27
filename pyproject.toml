@@ -1,6 +1,6 @@
 [project]
 name = "memory-vault"
-version = "1.2.0"
+version = "1.4.0"
 description = "Local-first AI memory system with hybrid search — PostgreSQL + pgvector"
 readme = "README.md"
 license = "MIT"
@@ -24,10 +24,10 @@ dependencies = [
     # reason rather than a feature need.
     "mcp>=2.0.0,<3.0.0",
     "fastapi>=0.141.1,<1",
-    "uvicorn[standard]>=0.52.2,<1",
+    "uvicorn[standard]>=0.52.3,<1",
     "python-multipart>=0.0.32",
     "pydantic>=2.13.4,<3",
-    "spacy>=3.8.14,<4",
+    "spacy>=3.8.15,<4",
     "structlog>=26.1.0,<27",
 ]
 
@@ -36,8 +36,25 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
-    "ruff>=0.16.1",
+    "ruff>=0.16.3",
+    # Used by the container-hardening tests to read docker-compose.yml. It
+    # arrives transitively today; declaring it means a dependency bump cannot
+    # silently take the test suite with it.
+    "pyyaml>=6.0.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# asyncio_mode = "auto" runs async tests without a per-module marker. Under the
+# default "strict" mode a module that forgets `pytestmark = pytest.mark.asyncio`
+# does not run its tests — it reports them as FAILED with "async def functions
+# are not natively supported". That failure is indistinguishable at a glance
+# from a genuine red result, so a test that never executed can be mistaken for
+# proof that a bug reproduces.
+asyncio_mode = "auto"
+# Unknown marks become errors rather than silent no-ops, so a typo in a
+# @pytest.mark name cannot quietly disable whatever it was guarding.
+addopts = "--strict-markers --strict-config"
 
 [tool.ruff]
 line-length = 100
@@ -58,7 +75,7 @@ quote-style = "double"
 memory-vault = "memory_vault.cli:main"
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

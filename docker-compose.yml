@@ -23,7 +23,7 @@ services:
       retries: 10
 
   app:
-    image: ghcr.io/mihaibuilds/memory-vault:1.2.0
+    image: ghcr.io/mihaibuilds/memory-vault:1.4.0
     depends_on:
       db:
         condition: service_healthy
@@ -37,12 +37,32 @@ services:
       DB_NAME: memory_vault
       DB_USER: memory_vault
       DB_PASSWORD: memory_vault
+      # Least-privilege option: migrations define memory_vault_app /
+      # memory_vault_readonly / memory_vault_migrator group roles. To use them,
+      # create two login roles, grant each one group, then point DB_USER at the
+      # app role and set the two variables below to the migrator. Unset means
+      # migrations run as DB_USER, which is the single-role setup above.
+      # See docs/threat-model.md.
+      # DB_MIGRATION_USER: memory_vault_migrate
+      # DB_MIGRATION_PASSWORD: change_me
       API_HOST: 0.0.0.0
       API_PORT: 8000
       API_AUTH_ENABLED: "true"
       API_CORS_ORIGINS: "*"
       API_RATE_LIMIT_PER_MIN: "120"
       LOG_LEVEL: "INFO"
+    # The image runs as a non-root user (uid 10001) and needs nothing in its
+    # own filesystem at runtime: the embedding model is baked in at build time,
+    # logs go to the volume below, and streamed uploads go to the tmpfs. That
+    # makes a read-only root filesystem practical rather than aspirational.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      # File uploads are streamed to a tempfile before ingestion.
+      - /tmp
     volumes:
       - app_logs:/var/log/memory-vault
 
