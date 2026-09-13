@@ -18,7 +18,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from memory_vault.config import settings
-from memory_vault.models.db import execute_query, fetch_all, fetch_one
+from memory_vault.models.db import (
+    execute_query,
+    fetch_all,
+    fetch_all_with_setting,
+    fetch_one,
+)
 from memory_vault.services.embedding import _get_model, embed, embed_batch
 
 logger = logging.getLogger(__name__)
@@ -162,6 +167,14 @@ _FTS_WEIGHT = 1.0
 _IMPORTANCE_WEIGHT = 0.15
 _RECENCY_HALF_LIFE_DAYS = 90
 _RECENCY_MAX_BOOST = 0.05
+
+# HNSW search breadth. Higher values search more of the index, trading latency
+# for recall; the server default is 40. The ceiling is not pgvector's limit
+# (1000) but a practical one: this is a knob a caller can set per request, and
+# a large value turns one search into a slow scan. Capping it keeps a careless
+# or hostile caller from doing that to an instance.
+_EF_SEARCH_MIN = 1
+_EF_SEARCH_MAX = 1000
 
 
 @dataclass
@@ -314,9 +327,16 @@ async def hybrid_search(
     limit: int | None = None,
     *,
     enrich: bool = True,
+    ef_search: int | None = None,
 ) -> tuple[list[SearchResult], list[str], int]:
     """
     Hybrid search: vector (HNSW) + full-text (tsvector GIN) + RRF merging.
+
+    `ef_search` raises HNSW's search breadth for this query only, trading
+    latency for recall on a corpus where the default misses relevant matches.
+    None leaves the server default (40) alone; out-of-range values are clamped
+    rather than rejected, since this is a tuning hint and not a correctness
+    input.
 
     Returns: (results, query_variations, elapsed_ms)
     """
@@ -386,7 +406,13 @@ async def hybrid_search(
         FROM ({vec_sql}) AS deduped
     """  # nosec B608
 
-    vec_rows = await fetch_all(vec_sql, tuple(vec_params))
+    if ef_search is None:
+        vec_rows = await fetch_all(vec_sql, tuple(vec_params))
+    else:
+        clamped = max(_EF_SEARCH_MIN, min(int(ef_search), _EF_SEARCH_MAX))
+        vec_rows = await fetch_all_with_setting(
+            "hnsw.ef_search", str(clamped), vec_sql, tuple(vec_params)
+        )
 
     # --- Arm 2: Full-text search ---
 
@@ -536,6 +562,71 @@ async def log_query(
         )
     except Exception:
         logger.exception("Failed to log query")
+
+
+# Below this, a search's best hit is not really an answer to what was asked.
+#
+# Measured against a seeded corpus rather than chosen: questions the corpus
+# could genuinely answer scored 0.51-0.58 at rank 1, while questions in the
+# same domain with no real answer present, and questions about nothing in the
+# corpus at all, scored 0.03-0.28. 0.35 sits in the empty gap between those
+# two groups, so it separates them without cutting through either.
+#
+# The gap moves with the embedding model, so this travels with
+# all-MiniLM-L6-v2 and would need re-measuring if that changed.
+WEAK_MATCH_SIMILARITY = 0.35
+
+# Matches the window memory_status and memory://stats already report over.
+SEARCH_QUALITY_WINDOW_HOURS = 24
+
+
+@dataclass(frozen=True)
+class SearchQuality:
+    """Aggregate of how well recent searches matched."""
+
+    queries: int
+    avg_top_similarity: float | None
+    weak_matches: int
+    empty_results: int
+
+
+async def recent_search_quality(
+    window_hours: int = SEARCH_QUALITY_WINDOW_HOURS,
+) -> SearchQuality:
+    """Summarise how well searches in the recent window matched.
+
+    Averages each search's best hit rather than the mean of its top-K. Search
+    returns up to `limit` rows whatever the corpus holds, so ranks below the
+    first are padding on a small or narrow vault: averaging down the ranks
+    measures how many rows were asked for as much as how well they matched,
+    and drags a good query below a bad one. The best hit is the part that
+    answers "did this find the thing".
+
+    Empty searches are counted, not averaged. `top_similarity` is NULL when a
+    search returned nothing, and AVG skips NULLs — so without a separate count
+    a vault answering nothing at all would report the average of the few
+    searches that did match, and look healthy.
+    """
+    row = await fetch_one(
+        """SELECT COUNT(*)                                        AS queries,
+                  AVG(top_similarity)                             AS avg_top,
+                  COUNT(*) FILTER (WHERE top_similarity < %s)     AS weak,
+                  COUNT(*) FILTER (WHERE result_count = 0)        AS empty
+           FROM query_log
+           WHERE created_at >= now() - make_interval(hours => %s)""",
+        (WEAK_MATCH_SIMILARITY, window_hours),
+    )
+
+    if not row or not row["queries"]:
+        return SearchQuality(queries=0, avg_top_similarity=None, weak_matches=0, empty_results=0)
+
+    avg_top = row["avg_top"]
+    return SearchQuality(
+        queries=row["queries"],
+        avg_top_similarity=round(float(avg_top), 4) if avg_top is not None else None,
+        weak_matches=row["weak"] or 0,
+        empty_results=row["empty"] or 0,
+    )
 
 
 async def resolve_space_names(names: list[str] | None) -> list[int]:

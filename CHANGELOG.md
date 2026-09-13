@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-09-10
+
+The MCP server can now be reached over HTTP, so a client on another machine no
+longer needs an SSH tunnel or `docker exec` to talk to a vault running in
+Docker. Alongside it, two things that make a large vault easier to reason
+about: a warning when a space has grown big enough to hurt recall, and a
+diagnostic showing how well recent searches have actually been matching.
+
+Nothing here requires action on upgrade. The HTTP transport is off unless you
+turn it on, and `stdio` is untouched.
+
+### Added
+
+- **Serve MCP over HTTP.** Set `MCP_HTTP_ENABLED=true` and the MCP server
+  mounts at `/api/mcp` on the same port as the REST API, speaking SSE at
+  `/api/mcp/sse`. Clients that cannot spawn a local process — a harness on
+  another machine, or anything pointed at a URL rather than a command — can now
+  connect. Requested in #194.
+
+  It is **off by default**, because on by default would publish a memory store
+  on a network port. When enabled, every request needs a bearer token from
+  `memory-vault token create`: the same tokens the REST API uses, checked
+  against the same table, so revoking one revokes it everywhere.
+
+  The transport also answers only to hostnames it recognises — `localhost` and
+  `127.0.0.1` unless told otherwise — and returns **421 Misdirected Request**
+  to anything else. That is DNS-rebinding protection, and it is why reaching
+  the server by container name or LAN address fails until you say so.
+
+- **Name the hosts the transport answers to.** `MCP_HTTP_ALLOWED_HOSTS` is a
+  comma-separated list — `MCP_HTTP_ALLOWED_HOSTS=vault.internal:8000`. It
+  **replaces** the default rather than adding to it, so include `localhost:*`
+  if you still want local clients. Without this, any deployment reached by a
+  name other than localhost is unusable.
+
+- **See how well recent searches have been matching.**
+  `GET /api/search/quality` reports the average best match across the last 24
+  hours, how many searches matched weakly, and how many returned nothing. The
+  Stats page shows the same figures.
+
+  It aggregates what searching already recorded, so asking costs nothing and
+  runs no query of its own. It averages each search's *best* hit rather than
+  the mean of its top-K: search returns as many rows as you ask for whatever
+  the vault holds, so averaging down the ranks measures your `limit` as much as
+  the quality of the match.
+
+  Watch `weak_matches` rather than `empty_results`. A search that finds nothing
+  relevant still returns its closest guesses, so a vault can answer badly
+  without ever returning zero results.
+
+- **Say when a space has grown large enough to split.** Past 5,000 memories in
+  a single space, the Stats page says so. Nothing breaks at that point and
+  search keeps working — what degrades is precision, as a query competes
+  against everything in the space. Splitting by topic and searching a narrower
+  space usually helps more than tuning the query.
+
+### Fixed
+
+- **The MCP server introduced itself without a version.** Clients that show a
+  server list displayed Memory Vault with an empty version string — the SDK
+  defaults it to empty and nothing was passing one. It now reports the
+  installed version, read from the package so it cannot drift from the
+  version bump a release already does.
+
+### Security
+
+- **`browserslist` bumped past a prototype-write advisory** (4.28.4 → 4.28.9).
+  A build-time dependency only — it never reaches the published image or the
+  production bundle — and the advisory needs an attacker-controlled stats file
+  this project does not have. Updated regardless.
+
+### Changed
+
+- Dependency updates: `psycopg` ≥3.3.5, `pydantic` ≥2.13.5, `ruff` ≥0.16.6,
+  and nine web packages including `react-router-dom` 7.18.3 and `eslint`
+  10.10.0.
+
+## [1.5.0] — 2026-09-05
+
+Eight additions, most of them about doing something with a graph you have
+already built: reading the memories behind a node, filtering by more than one
+type at a time, and merging the entities that extraction split apart. Plus a
+Windows fix that had been waiting on a reproduction.
+
+Nothing here requires action on upgrade. Every new parameter is optional, and
+every existing call behaves as it did.
+
+### Added
+
+- **Merge entities the extractor kept apart.** Extraction is literal and
+  per-occurrence, so one person arrives as "Alice", "Alice Smith" and
+  "A. Smith". `POST /api/graph/entities/merge` folds one into another in a
+  single transaction. Deciding that two entities are the same is a judgement
+  call, so it is offered rather than guessed at. Merging across spaces is
+  refused: entities are per-space by design, and a cross-space merge would move
+  data between spaces without saying so.
+- **Read the memories behind a graph node.** `GET /api/chunks?entity_id=…`
+  returns the chunks that mention an entity, and the graph's node panel links
+  into Browse with that filter applied. The node used to be a dead end — you
+  could see that something mattered and how often it came up, but not read what
+  it came from.
+- **Filter the graph by several types at once.** `?type=Person,Tool` on the
+  entity, relationship and visualization endpoints. Selecting two types meant
+  two requests and no way to see both together. A single value still behaves
+  exactly as before.
+- **Delete a space.** `DELETE /api/spaces/{name}` removes one that holds
+  nothing, with a two-step delete on the dashboard. Spaces could be created but
+  never removed, so a typo was permanent. A space with contents is refused
+  rather than emptied — and "empty" means no memories *and* no graph entities,
+  since deleting a space cascades into its entities.
+- **Upload several files in one request.** `POST /api/ingest/files` answers per
+  file: one malformed file in a batch of thirty does not discard the other
+  twenty-nine, and the response says which one to fix. Bounded per file, in
+  aggregate, and by count.
+- **Tune search breadth per query.** `ef_search` on `/api/search` and the MCP
+  `recall` tool widens the HNSW search for one query without changing the
+  server default for everyone. Bounded 1–1000.
+- **The vector index is warmed at start-up.** `memory-vault warm-index` runs
+  after migrations, so the first real search is not the one that pays to read
+  the index off disk. Warming never blocks start-up: a container that refuses to
+  start because an optimisation failed is worse than a slow first query.
+
+### Fixed
+
+- **Memory Vault now starts cleanly on Windows.** Windows defaults to an event
+  loop psycopg refuses to use, so every connection attempt failed instantly and
+  the pool retried — a burst of identical warnings and a multi-second delay
+  before anything worked. A compatible loop is now selected at import.
+  Reproduced on Windows 11 beforehand and measured after: three warnings and a
+  pool timeout became zero warnings. Other platforms are untouched. ([#77])
+
+### Contributors
+
+- Rivestack suggested both the per-query `ef_search` knob and warming the vector
+  index at start-up.
+
+[#77]: https://github.com/MihaiBuilds/memory-vault/issues/77
+
 ## [1.4.0] — 2026-08-23
 
 Ten bug fixes and one new capability. Most of these are the kind that only

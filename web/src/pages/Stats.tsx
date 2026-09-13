@@ -1,5 +1,21 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, api } from '../api'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ApiError, api, type SearchQualityResponse } from '../api'
+
+/**
+ * Where a single space gets large enough to be worth splitting.
+ *
+ * Not a hard limit and nothing changes when a space crosses it — search keeps
+ * working, ingestion keeps working. What degrades is precision: a query
+ * competes against everything in the space, so unrelated-but-similar memories
+ * start crowding out the ones that matter, and HNSW index rebuilds get slow
+ * (the README's tuning notes put that at "past a few thousand chunks").
+ *
+ * The number is a judgement, not a measurement. It is high enough that a
+ * normal vault never sees this and low enough to arrive before someone
+ * concludes that recall has quietly stopped working.
+ */
+const LARGE_SPACE_CHUNKS = 5_000
 
 export default function StatsPage() {
   const qc = useQueryClient()
@@ -13,10 +29,19 @@ export default function StatsPage() {
     queryFn: () => api.listSpaces(),
     refetchInterval: 30_000,
   })
+  const qualityQuery = useQuery({
+    queryKey: ['search-quality'],
+    queryFn: () => api.searchQuality(),
+    refetchInterval: 30_000,
+  })
 
   const health = healthQuery.data
   const spaces = spacesQuery.data?.spaces ?? []
   const totalChunks = spaces.reduce((sum, s) => sum + s.chunk_count, 0)
+  // Per space, not on the total: a vault with ten thousand memories spread
+  // across eight spaces is well organised, while the same number in one space
+  // is the case worth mentioning.
+  const largeSpaces = spaces.filter((s) => s.chunk_count > LARGE_SPACE_CHUNKS)
   const maxCount = Math.max(1, ...spaces.map((s) => s.chunk_count))
 
   const dbOk = health?.database === 'connected'
@@ -25,7 +50,29 @@ export default function StatsPage() {
   function refreshAll() {
     qc.invalidateQueries({ queryKey: ['health'] })
     qc.invalidateQueries({ queryKey: ['spaces'] })
+    qc.invalidateQueries({ queryKey: ['search-quality'] })
   }
+
+  // Two-step delete: the first click arms the space, the second confirms.
+  // Deleting a space is not undoable, and a stray click on a row in a list is
+  // an easy mistake to make.
+  const [armed, setArmed] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const deleteSpace = useMutation({
+    mutationFn: (name: string) => api.deleteSpace(name),
+    onSuccess: () => {
+      setArmed(null)
+      setDeleteError(null)
+      qc.invalidateQueries({ queryKey: ['spaces'] })
+    },
+    onError: (e) => {
+      setArmed(null)
+      // The server's message says what is blocking — how many memories and
+      // how many graph entities — which is more use than "could not delete".
+      setDeleteError(e instanceof ApiError ? e.message : 'Could not delete the space.')
+    },
+  })
 
   const error = healthQuery.error || spacesQuery.error
 
@@ -74,8 +121,40 @@ export default function StatsPage() {
         </div>
       </div>
 
+      <SearchQualityCard
+        data={qualityQuery.data}
+        loading={qualityQuery.isPending}
+      />
+
       <div className="rounded-lg border border-border bg-bg2 p-4">
         <h2 className="text-xs uppercase tracking-wider text-text2 mb-3">Spaces</h2>
+        {deleteError && (
+          <p className="mb-3 rounded-sm border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+            {deleteError}
+          </p>
+        )}
+        {largeSpaces.length > 0 && (
+          // Amber, not red: nothing is broken. This is the point where recall
+          // quality starts depending on how the vault is organised, and the
+          // advice is only worth giving because both halves are possible today
+          // — memories can be moved between spaces, and search takes a space
+          // filter.
+          <div className="mb-3 rounded-sm border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            <p>
+              <span className="font-medium">
+                {largeSpaces.length === 1
+                  ? `${largeSpaces[0].name} holds ${largeSpaces[0].chunk_count.toLocaleString()} memories.`
+                  : `${largeSpaces.length} spaces hold more than ${LARGE_SPACE_CHUNKS.toLocaleString()} memories.`}
+              </span>{' '}
+              Searches run against everything in a space, so a large one means more
+              unrelated-but-similar results competing with the ones you want.
+            </p>
+            <p className="mt-1 text-amber-300/80">
+              Splitting by topic or project and searching a narrower space usually
+              helps more than tuning the query.
+            </p>
+          </div>
+        )}
         {spacesQuery.isPending ? (
           <p className="text-sm text-text2">Loading…</p>
         ) : spaces.length === 0 ? (
@@ -84,10 +163,49 @@ export default function StatsPage() {
           <ul className="space-y-3">
             {spaces.map((s) => (
               <li key={s.name} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-sm gap-3">
                   <span className="text-text font-medium">{s.name}</span>
-                  <span className="text-text2 text-xs">
-                    {s.chunk_count.toLocaleString()} chunk{s.chunk_count === 1 ? '' : 's'}
+                  <span className="flex items-center gap-3">
+                    <span
+                      className={`text-xs ${
+                        s.chunk_count > LARGE_SPACE_CHUNKS ? 'text-amber-300' : 'text-text2'
+                      }`}
+                      title={
+                        s.chunk_count > LARGE_SPACE_CHUNKS
+                          ? 'Large enough that splitting by topic usually improves recall'
+                          : undefined
+                      }
+                    >
+                      {s.chunk_count.toLocaleString()} chunk{s.chunk_count === 1 ? '' : 's'}
+                    </span>
+                    {armed === s.name ? (
+                      <span className="flex items-center gap-2">
+                        <button
+                          onClick={() => deleteSpace.mutate(s.name)}
+                          disabled={deleteSpace.isPending}
+                          className="text-xs text-red-400 hover:text-red-300 underline disabled:opacity-50"
+                        >
+                          {deleteSpace.isPending ? 'Deleting…' : 'Confirm'}
+                        </button>
+                        <button
+                          onClick={() => setArmed(null)}
+                          className="text-xs text-text2 hover:text-text underline"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setDeleteError(null)
+                          setArmed(s.name)
+                        }}
+                        className="text-xs text-text2 hover:text-red-400"
+                        aria-label={`Delete space ${s.name}`}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </span>
                 </div>
                 <div className="h-1.5 rounded-sm bg-bg overflow-hidden">
@@ -104,6 +222,86 @@ export default function StatsPage() {
           </ul>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * How well recent searches have been finding things.
+ *
+ * Reports the average best match per search, not the average of each search's
+ * top-K. Search returns as many rows as were asked for whatever the corpus
+ * holds, so the lower ranks are padding on a small or narrow vault — averaging
+ * down them measures the requested limit as much as the match quality.
+ *
+ * Weak matches are the number worth watching. A search that finds nothing
+ * relevant still returns rows, so "no results" almost never happens; what
+ * happens instead is results that are not answers.
+ */
+function SearchQualityCard({
+  data,
+  loading,
+}: {
+  data?: SearchQualityResponse
+  loading: boolean
+}) {
+  const avg = data?.avg_top_similarity ?? null
+  const weakShare =
+    data && data.queries > 0 ? data.weak_matches / data.queries : 0
+
+  return (
+    <div className="rounded-lg border border-border bg-bg2 p-4">
+      <h2 className="text-xs uppercase tracking-wider text-text2 mb-3">
+        Search quality
+      </h2>
+
+      {loading ? (
+        <p className="text-sm text-text2">Loading…</p>
+      ) : !data || data.queries === 0 ? (
+        // Not a zero — nothing has been measured yet. Showing 0.00 here would
+        // read as "search is failing" on a vault nobody has searched.
+        <p className="text-sm text-text2">
+          No searches in the last {data?.window_hours ?? 24} hours yet. Run a few
+          and this fills in.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Metric
+              label="Avg best match"
+              value={avg === null ? '—' : avg.toFixed(2)}
+            />
+            <Metric label={`Searches (${data.window_hours}h)`} value={data.queries.toLocaleString()} />
+            <Metric label="Weak matches" value={data.weak_matches.toLocaleString()} />
+          </div>
+
+          {weakShare > 0.5 && (
+            // Amber, not red: search is working. The corpus just does not hold
+            // answers to what is being asked of it.
+            <div className="mt-3 rounded-sm border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+              <p>
+                <span className="font-medium">
+                  {data.weak_matches} of {data.queries} searches scored below{' '}
+                  {data.weak_threshold.toFixed(2)}.
+                </span>{' '}
+                Searches always return their best guesses, so a low score means
+                the results came back without really answering the question.
+              </p>
+              <p className="mt-1 text-amber-300/80">
+                Usually this means the answers were never stored, rather than
+                that search is failing to find them.
+              </p>
+            </div>
+          )}
+
+          {data.empty_results > 0 && (
+            <p className="mt-3 text-xs text-text2">
+              {data.empty_results} search{data.empty_results === 1 ? '' : 'es'}{' '}
+              returned nothing at all.
+            </p>
+          )}
+        </>
+      )}
     </div>
   )
 }

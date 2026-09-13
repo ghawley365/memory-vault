@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,12 @@ class SearchRequest(BaseModel):
     spaces: list[str] | None = Field(default=None, examples=[["default"]])
     since: str | None = Field(default=None, examples=["2026-01-01"])
     limit: int = Field(default=10, ge=1, le=50)
+    # HNSW search breadth for this query only. Omit to use the server default
+    # (40). Higher values search more of the index — better recall, slower
+    # query — which is worth reaching for on a large or noisy corpus. Bounded
+    # here as well as in the service so an out-of-range value is a 422 rather
+    # than a silent clamp.
+    ef_search: int | None = Field(default=None, ge=1, le=1000, examples=[100])
 
 
 class SearchHit(BaseModel):
@@ -55,6 +62,30 @@ class SearchResponse(BaseModel):
     total_results: int
     query_variations: list[str]
     query_time_ms: int
+
+
+class SearchQualityResponse(BaseModel):
+    """How well recent searches have been matching.
+
+    Computed from searches that actually happened rather than from a probe
+    query, so it reflects what people asked rather than what a synthetic
+    benchmark would.
+    """
+
+    queries: int = Field(description="Searches in the window.")
+    window_hours: int
+    avg_top_similarity: float | None = Field(
+        default=None,
+        description=(
+            "Mean best-match score across those searches. None when nothing has been searched yet."
+        ),
+    )
+    weak_matches: int = Field(
+        default=0,
+        description="Searches whose best match was below the weak threshold.",
+    )
+    empty_results: int = Field(default=0, description="Searches that returned nothing at all.")
+    weak_threshold: float = Field(description="The score below which a best match counts as weak.")
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +182,75 @@ class IngestResponse(BaseModel):
     message: str
 
 
+class IngestFileResult(BaseModel):
+    """What happened to one file in a batch upload.
+
+    No per-file chunk count: the pipeline accumulates chunks across the batch
+    and does not attribute them per job, so the only honest number is the
+    batch total on the response. Reporting a per-file zero would read as "this
+    file produced nothing" for files that produced plenty.
+    """
+
+    filename: str
+    stored: bool
+    error: str | None = Field(
+        default=None,
+        description="Why this file was not ingested. Absent when it succeeded.",
+    )
+
+
+class IngestFilesResponse(BaseModel):
+    """Per-file outcomes for a batch upload.
+
+    Reported per file rather than as a single verdict: a batch where one file
+    is malformed should still store the rest, and the caller needs to know
+    which one to fix rather than being told the upload failed.
+    """
+
+    files: list[IngestFileResult]
+    files_succeeded: int
+    files_failed: int
+    chunks_created: int
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Knowledge graph
 # ---------------------------------------------------------------------------
+
+
+class EntityMergeRequest(BaseModel):
+    """Fold one entity into another.
+
+    Both must be in the same space. The loser is deleted; everything pointing
+    at it is repointed at the winner.
+    """
+
+    winner_id: UUID = Field(description="The entity to keep.")
+    loser_id: UUID = Field(description="The entity to fold in and delete.")
+
+
+class EntityMergeResponse(BaseModel):
+    winner_id: str
+    winner_name: str
+    merged_name: str = Field(description="Name of the entity that was folded in.")
+    mentions_moved: int
+    relationships_moved: int
+    duplicate_mentions_dropped: int = Field(
+        default=0,
+        description=(
+            "Mentions discarded because the winner already had one at the same "
+            "place in the same memory."
+        ),
+    )
+    self_relationships_dropped: int = Field(
+        default=0,
+        description=(
+            "Relationships between the two entities, discarded because after "
+            "merging they would point an entity at itself."
+        ),
+    )
+    message: str
 
 
 class EntitySummary(BaseModel):

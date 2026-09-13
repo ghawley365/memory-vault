@@ -40,6 +40,7 @@ if _project_root not in sys.path:
 
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 
+from memory_vault import __version__  # noqa: E402
 from memory_vault.models.db import (  # noqa: E402
     execute_query,
     execute_returning,
@@ -161,7 +162,12 @@ def _budget_results(results: list[dict], max_tokens: int) -> tuple[list[dict], b
 # MCP server instance
 # ---------------------------------------------------------------------------
 
-mcp = MCPServer("memory-vault")
+# The version is passed explicitly because `MCPServer` defaults it to an empty
+# string, and an unset version is what a client shows in its server list — so
+# every release so far has introduced itself as "memory-vault" with no version
+# at all. Read from the package rather than written here, so it cannot drift
+# from the four places a release already updates.
+mcp = MCPServer("memory-vault", version=__version__)
 
 # ---------------------------------------------------------------------------
 # DB lifecycle
@@ -195,6 +201,7 @@ async def recall(
     since: str | None = None,
     limit: int = 10,
     max_tokens: int = 2000,
+    ef_search: int | None = None,
 ) -> str:
     """
     Search your memories for information relevant to a query.
@@ -210,6 +217,10 @@ async def recall(
         since: Only return memories after this date (ISO format, e.g. "2025-01-01").
         limit: Maximum number of results (default 10, max 50).
         max_tokens: Token budget for results (default 2000).
+        ef_search: How much of the vector index to search, 1-1000. Omit to use
+                the default (40). Raise it when a search should have found
+                something and did not — better recall, slower query. Worth
+                trying before concluding a memory is missing.
     """
     if not await _ensure_db():
         return _dumps(
@@ -240,6 +251,7 @@ async def recall(
             space_ids=space_ids,
             since=since_dt,
             limit=limit,
+            ef_search=ef_search,
         )
 
         # Observability: memory_status reads queries_24h from query_log,
