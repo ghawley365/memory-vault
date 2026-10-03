@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LOCAL FORK: starts the memory-vault stack at login (scripts/launchd-autostart.sh).
+  Install:  cp scripts/com.memory-vault.autostart.plist ~/Library/LaunchAgents/
+            launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.memory-vault.autostart.plist
+  Check:    launchctl print gui/$(id -u)/com.memory-vault.autostart | grep -E 'state|last exit'
+  Kept in the repo because the installed copy went missing between 2026-09-03 and 2026-09-22,
+  and three reboots then left the vault down until a session started it by hand.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.memory-vault.autostart</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/garyhawley/memory-vault/memory-vault/scripts/launchd-autostart.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/garyhawley/memory-vault/memory-vault/logs/autostart.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/garyhawley/memory-vault/memory-vault/logs/autostart.launchd.log</string>
+</dict>
+</plist>
