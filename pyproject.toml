@@ -44,7 +44,9 @@ dev = [
     "pyyaml>=6.0.3",
 ]
 nlp = [
-    "en-core-web-sm",
+    # LOCAL FORK: a direct reference WITH its sha256. The name is unclaimed on PyPI, so a bare name would let
+    # pip resolve it from an index (dependency confusion); the hash pins the exact wheel for pip and uv alike.
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
 ]
 
 [tool.pytest.ini_options]
@@ -89,6 +91,3 @@ exclude = ["tests*"]
 [tool.setuptools.package-data]
 "memory_vault.api" = ["static/**/*"]
 "memory_vault" = ["migrations/*.sql"]
-
-[tool.uv.sources]
-en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
