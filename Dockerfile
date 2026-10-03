@@ -37,6 +37,13 @@ RUN pip install --no-cache-dir . \
     && chmod +x ./scripts/start.sh \
     && mkdir -p /var/log/memory-vault
 
+# LOCAL FORK: nomic-bert-2048's remote modeling code calls
+# PreTrainedModel.get_extended_attention_mask, removed in transformers 5.x
+# ("'NomicBertModel' object has no attribute 'get_extended_attention_mask'").
+# Pin 4.x until nomic updates its code. Verified: transformers 4.57.6 +
+# sentence-transformers 5.7.0, pip check clean, encode -> 768-d.
+RUN pip install --no-cache-dir "transformers>=4.41,<5"
+
 RUN python -m spacy download en_core_web_sm
 
 # The container runs as a non-root user, so put the model caches somewhere
@@ -62,8 +69,15 @@ USER memoryvault
 # Download the embedding model at BUILD time. Without this the first request
 # after every container start reaches out to huggingface.co and writes into
 # the cache — which fails outright when the root filesystem is read-only, and
-# makes a cold start depend on the network. ~92MB on a ~2.3GB image.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# makes a cold start depend on the network.
+#
+# LOCAL FORK: bake nomic-embed-text-v1.5 (768-d) instead of upstream's
+# all-MiniLM-L6-v2, pinned to the same revision as EMBEDDING_MODEL_REVISION.
+# trust_remote_code also pulls nomic-ai/nomic-bert-2048 architecture code into
+# the HF modules cache. ~550MB. Keep these ARGs in sync with .env / override.
+ARG EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+ARG EMBEDDING_MODEL_REVISION=e9b6763023c676ca8431644204f50c2b100d9aab
+RUN python -c "import os; from sentence_transformers import SentenceTransformer; m = SentenceTransformer(os.environ['EMBEDDING_MODEL'], revision=os.environ['EMBEDDING_MODEL_REVISION'], trust_remote_code=True); v = m.encode(['search_query: build smoke test']); assert v.shape[1] == 768, v.shape; print('baked', os.environ['EMBEDDING_MODEL'], v.shape)"
 
 EXPOSE 8000
 

@@ -17,10 +17,9 @@ services:
       # Pin the Hub revision: trust_remote_code executes the model repo's own
       # architecture code, so an unpinned 'main' would run whatever lands there.
       EMBEDDING_MODEL_REVISION: e9b6763023c676ca8431644204f50c2b100d9aab
-    volumes:
-      # Without this the model (~550 MB) is re-downloaded inside the container
-      # on every recreate, and the first embed of a fresh container blocks on it.
-      - hf_cache:/root/.cache/huggingface
-
-volumes:
-  hf_cache:
+      # Model is baked into the image at build time (see Dockerfile); never
+      # reach huggingface.co at runtime — the root filesystem is read-only.
+      HF_HUB_OFFLINE: "1"
+      # Chat LLM calls run inside the container; map localhost -> the Mac.
+      LLM_LOOPBACK_HOST: host.docker.internal
+      TRANSFORMERS_OFFLINE: "1"

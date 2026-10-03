@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncGenerator
@@ -234,7 +235,18 @@ def _build_messages(
 def _resolve_llm_base(llm_url: str) -> str:
     raw = llm_url.rstrip("/")
     m = re.match(r"(https?://[^/]+)", raw)
-    return m.group(1) if m else "http://localhost:1234"
+    base = m.group(1) if m else "http://localhost:1234"
+    # LOCAL FORK: the API runs in Docker, where "localhost" is the container,
+    # not the machine running LM Studio. When LLM_LOOPBACK_HOST is set (e.g.
+    # host.docker.internal), rewrite loopback hosts so the UI default works.
+    loopback_target = os.environ.get("LLM_LOOPBACK_HOST", "").strip()
+    if loopback_target:
+        base = re.sub(
+            r"^(https?://)(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?=[:/]|$)",
+            lambda mm: mm.group(1) + loopback_target,
+            base,
+        )
+    return base
 
 
 async def _detect_model(
