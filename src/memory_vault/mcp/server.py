@@ -22,6 +22,7 @@ import decimal
 import hashlib
 import json
 import logging
+import os
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -296,6 +297,15 @@ async def recall(
         return _dumps({"status": "error", "results": [], "message": f"Search failed: {e}"})
 
 
+# LOCAL FORK: the session's project space. remember() used to hard-code "default", so every session that
+# forgot to name a space filed its memory there and "default" became a catch-all of several projects. Each
+# project launches this server from its own .mcp.json and names its space there; read at CALL time so the
+# setting is testable and a changed .mcp.json applies at the next server start. A configured space that does
+# not exist is refused by remember() like any unknown space — never silently rerouted to "default".
+def _default_space() -> str:
+    return os.environ.get("MEMORY_VAULT_DEFAULT_SPACE", "").strip() or "default"
+
+
 # ---------------------------------------------------------------------------
 # Tool: remember
 # ---------------------------------------------------------------------------
@@ -304,7 +314,7 @@ async def recall(
 @mcp.tool()
 async def remember(
     text: str,
-    space: str = "default",
+    space: str | None = None,
     source: str = "mcp",
     speaker: str = "human",
     supersedes: str | None = None,
@@ -322,7 +332,8 @@ async def remember(
 
     Args:
         text: The text content to remember.
-        space: Which memory space to store it in (default "default").
+        space: Which memory space to store it in. Omitted: the session's project space
+            (MEMORY_VAULT_DEFAULT_SPACE in the project's .mcp.json), else "default".
         source: Where this memory comes from (default "mcp").
         speaker: Who said/wrote this — "human" or "assistant" (default "human").
         supersedes: chunk_id of an earlier memory this one replaces (optional).
@@ -337,6 +348,8 @@ async def remember(
         return _dumps({"stored": False, "error": "text must not be empty."})
     if len(text) > 1_000_000:
         return _dumps({"stored": False, "error": "text exceeds the 1,000,000 character limit."})
+
+    space = space or _default_space()
 
     try:
         space_row = await fetch_one("SELECT id FROM memory_spaces WHERE name = %s", (space,))
@@ -741,6 +754,7 @@ async def memory_status() -> str:
                 # purge_forgotten is worth running.
                 "forgotten_chunks": total_chunks - active_chunks,
                 "chunks_per_space": spaces,
+                "default_space": _default_space(),
                 "queries_24h": ql["cnt"] if ql else 0,
                 "avg_latency_ms": round(float(ql["avg_lat"]), 1) if ql and ql["avg_lat"] else None,
             },
