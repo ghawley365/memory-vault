@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LOCAL FORK: the nightly vault backup (scripts/backup-vault.sh), 03:00 local, before the 03:30 CueSignal pull.
+  Install:  cp scripts/com.memory-vault.backup.plist ~/Library/LaunchAgents/
+            launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.memory-vault.backup.plist
+  Check:    launchctl print gui/$(id -u)/com.memory-vault.backup | grep -E 'state|last exit'
+  The script lives outside ~/Desktop on purpose: launchd's bash cannot run scripts there (exit 126).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.memory-vault.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/garyhawley/memory-vault/memory-vault/scripts/backup-vault.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/garyhawley/memory-vault/memory-vault/logs/backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/garyhawley/memory-vault/memory-vault/logs/backup.launchd.log</string>
+</dict>
+</plist>

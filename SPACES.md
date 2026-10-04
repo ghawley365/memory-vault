@@ -9,8 +9,7 @@ found by a search that happens to name that space, so this list is what every se
 
 | Space | What belongs here | Default for |
 |---|---|---|
-| `km-sales-app` | CueSignal (the Signal repo in the "Konica Minolta Sales APP Strategy" workspace): decisions, outcomes, plans, owner instructions, audits — including the Sentinel fleet notes folded in from the former cuesignal-* spaces. The legacy name is kept on purpose (configs, hooks and docs name it). | the CueSignal workspace (`.mcp.json`, `MEMORY_VAULT_DEFAULT_SPACE=km-sales-app`) |
-| `ai-output` | CueSignal's LLM-testing ledger mirror (`Signal/docs/llm-testing`, ids T/F/D/X/E-nnn). Written alongside km-sales-app on purpose. | — (named per call) |
+| `km-sales-app` | CueSignal (the Signal repo in the "Konica Minolta Sales APP Strategy" workspace): decisions, outcomes, plans, owner instructions, audits — including the Sentinel fleet notes folded in from the former cuesignal-* spaces and, since 2026-10-03, the LLM-testing ledger notes (ids T/F/D/X/E-nnn; the former `ai-output` space was merged in and deleted on the owner's word — ALL CueSignal memory stays here). The legacy name is kept on purpose (configs, hooks and docs name it). | the CueSignal workspace (`.mcp.json`, `MEMORY_VAULT_DEFAULT_SPACE=km-sales-app`) |
 | `codeapps` | codeapps.ai (the product on its own Hostinger VPS: CISO agent, OpenObserve, site, deploys, GAP items). | codeapps.ai (local-scope MCP entry, `MEMORY_VAULT_DEFAULT_SPACE=codeapps`) |
 | `insights` | Cross-project engineering lessons and gotchas. Project history belongs in the project's space. | — (named per call) |
 | `fleetiq` | FleetIQ (inactive): bulk-ingested code and docs plus its session notes. | — |
