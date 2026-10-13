@@ -1,6 +1,6 @@
 [project]
 name = "memory-vault"
-version = "1.6.0"
+version = "1.6.1"
 description = "Local-first AI memory system with hybrid search — PostgreSQL + pgvector"
 readme = "README.md"
 license = "MIT"
@@ -18,13 +18,13 @@ dependencies = [
     # deployment pins via EMBEDDING_MODEL); harmless for the default model.
     "einops>=0.8,<1",
     "numpy>=2.4.6",
-    "python-dotenv>=1.2.3",
+    "python-dotenv>=1.2.4",
     # 2.x replaced mcp.server.fastmcp with mcp.server.mcpserver, so 1.x and 2.x
     # cannot both be supported by one import — that is why the floor sits in
     # the 2.x line at all. 2.1.1 specifically brings a request body limit to
     # the SSE endpoints, which matters once the HTTP transport lands.
     "mcp>=2.2.0,<3.0.0",
-    "fastapi>=0.141.1,<1",
+    "fastapi>=0.142.2,<1",
     "uvicorn[standard]>=0.54.0,<1",
     "python-multipart>=0.0.32",
     "pydantic>=2.13.5,<3",
@@ -37,7 +37,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
-    "ruff>=0.16.9",
+    "ruff>=0.16.10",
     # Used by the container-hardening tests to read docker-compose.yml. It
     # arrives transitively today; declaring it means a dependency bump cannot
     # silently take the test suite with it.
