@@ -23,11 +23,11 @@ dependencies = [
     # cannot both be supported by one import — that is why the floor sits in
     # the 2.x line at all. 2.1.1 specifically brings a request body limit to
     # the SSE endpoints, which matters once the HTTP transport lands.
-    "mcp>=2.2.0,<3.0.0",
-    "fastapi>=0.142.2,<1",
+    "mcp>=2.3.0,<3.0.0",
+    "fastapi>=0.161.1,<1",
     "uvicorn[standard]>=0.54.0,<1",
     "python-multipart>=0.0.32",
-    "pydantic>=2.13.5,<3",
+    "pydantic>=2.14.1,<3",
     "spacy>=3.8.16,<4",
     "structlog>=26.1.0,<27",
 ]
@@ -37,7 +37,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
-    "ruff>=0.16.10",
+    "ruff>=0.17.2",
     # Used by the container-hardening tests to read docker-compose.yml. It
     # arrives transitively today; declaring it means a dependency bump cannot
     # silently take the test suite with it.
@@ -81,7 +81,7 @@ quote-style = "double"
 memory-vault = "memory_vault.cli:main"
 
 [build-system]
-requires = ["setuptools>=84.0.0"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
